@@ -1,0 +1,292 @@
+:root {
+  color-scheme: dark;
+  --bg-1: #06121c;
+  --bg-2: #0a2236;
+  --accent: #ffd97f;
+  --accent-2: #7fcfff;
+  --text: #eaf6ff;
+  --muted: #7fa3bd;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(ellipse at top, var(--bg-2) 0%, var(--bg-1) 80%);
+  color: var(--text);
+  user-select: none;
+}
+
+#game-root {
+  position: fixed;
+  inset: 0;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* === Title screen === */
+.title-overlay,
+.death-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at top, rgba(10,34,54,0.85) 0%, rgba(6,18,28,0.95) 80%);
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+
+.title-card,
+.death-card {
+  width: min(420px, 90vw);
+  padding: 2.4rem 2rem;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+}
+
+.title-card h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+}
+
+.title-card .subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.4rem;
+}
+
+.field input[type=text] {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+  background: rgba(0,0,0,0.3);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  outline: none;
+}
+
+.field input[type=text]:focus {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(127,207,255,0.15);
+}
+
+.color-row {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+}
+
+.color-swatch {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.15);
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+
+.color-swatch:hover { transform: scale(1.1); }
+.color-swatch.selected {
+  border-color: white;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.2);
+}
+
+button.play {
+  width: 100%;
+  margin-top: 1.5rem;
+  padding: 0.9rem;
+  font: 600 1rem inherit;
+  letter-spacing: 0.04em;
+  background: var(--accent);
+  color: #1a1207;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.08s ease, filter 0.1s ease;
+}
+
+button.play:hover { transform: translateY(-1px); filter: brightness(1.05); }
+button.play:active { transform: translateY(0); }
+
+.help {
+  margin-top: 1rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* === HUD === */
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  z-index: 5;
+  font-size: 0.85rem;
+}
+
+.hud-left, .hud-right {
+  background: rgba(0,0,0,0.35);
+  padding: 8px 12px;
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.hud-stat {
+  display: flex;
+  gap: 1rem;
+}
+
+.hud-stat .label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.hud-stat .value {
+  font-variant-numeric: tabular-nums;
+}
+
+.xp-bar {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  height: 8px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 5;
+}
+
+.xp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ffd97f, #ff85a1);
+  width: 0%;
+  transition: width 0.15s ease;
+}
+
+.boost-indicator {
+  position: fixed;
+  bottom: 36px;
+  left: 16px;
+  background: rgba(0,0,0,0.35);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  z-index: 5;
+}
+
+.boost-indicator.ready { color: var(--accent); }
+
+/* === Death screen === */
+.death-card h1 {
+  margin: 0 0 1rem;
+  font-size: 1.6rem;
+}
+
+.death-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.death-stat {
+  background: rgba(0,0,0,0.25);
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+}
+
+.death-stat .label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.death-stat .value {
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard {
+  margin: 1rem 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.leaderboard h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 0.8rem;
+  padding: 0.4rem 0.5rem;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.leaderboard-row:last-child { border-bottom: none; }
+
+.leaderboard-rank {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.leaderboard-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.leaderboard-mass {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.hidden { display: none !important; }

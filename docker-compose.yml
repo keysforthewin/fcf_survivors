@@ -1,0 +1,55 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: fcf-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo-data:/data/db
+    command: ["mongod", "--quiet"]
+
+  server:
+    image: oven/bun:1
+    container_name: fcf-server
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      PORT: "4000"
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/app
+      - server_root_node_modules:/app/node_modules
+      - server_pkg_node_modules:/app/packages/server/node_modules
+      - server_shared_node_modules:/app/packages/shared/node_modules
+    command: ["sh", "-c", "bun install && bun --watch run packages/server/src/index.ts"]
+
+  client:
+    image: oven/bun:1
+    container_name: fcf-client
+    restart: unless-stopped
+    working_dir: /app/packages/client
+    depends_on:
+      - server
+    environment:
+      SERVER_HOST: server
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - client_root_node_modules:/app/node_modules
+      - client_pkg_node_modules:/app/packages/client/node_modules
+      - client_shared_node_modules:/app/packages/shared/node_modules
+    command: ["sh", "-c", "cd /app && bun install && cd /app/packages/client && bun run dev --host 0.0.0.0"]
+
+volumes:
+  server_root_node_modules:
+  server_pkg_node_modules:
+  server_shared_node_modules:
+  client_root_node_modules:
+  client_pkg_node_modules:
+  client_shared_node_modules:

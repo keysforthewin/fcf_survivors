@@ -1,0 +1,12 @@
+{
+  "default": {
+    "paths": ["features/**/*.feature"],
+    "import": [
+      "test/support/world.ts",
+      "test/support/hooks.ts",
+      "test/steps/**/*.ts"
+    ],
+    "format": ["progress", "summary"],
+    "publishQuiet": true
+  }
+}

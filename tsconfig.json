@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "packages/shared/src/**/*",
+    "packages/server/src/**/*",
+    "packages/client/src/**/*"
+  ],
+  "exclude": ["**/node_modules", "**/dist"],
+  "compilerOptions": {
+    "types": ["bun"]
+  }
+}

@@ -1,0 +1,13 @@
+node_modules
+dist
+.vite
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+mongo-data/
+
+# BDD generated artefacts
+.features-gen/
+test-results/
+playwright-report/

@@ -1,0 +1,34 @@
+{
+  "name": "fcf-survivors",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "bun --watch run packages/server/src/index.ts",
+    "dev:client": "bun --cwd=packages/client run dev",
+    "dev:mongo": "docker compose up -d mongo",
+    "dev:mongo:down": "docker compose down",
+    "dev": "concurrently -n mongo,server,client -c blue,magenta,green \"bun run dev:mongo\" \"bun run dev:server\" \"bun run dev:client\"",
+    "docker:up": "docker compose up",
+    "docker:up:d": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "typecheck": "tsc -b",
+    "build:client": "bun --cwd=packages/client run build",
+    "build:server": "bun build packages/server/src/index.ts --target=bun --outdir=dist/server",
+    "test": "bun run test:server && bun run test:client",
+    "test:server": "bun --cwd=packages/server run test",
+    "test:client": "bun --cwd=packages/client run test"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^12.9.0",
+    "@playwright/test": "^1.60.0",
+    "@types/bun": "latest",
+    "concurrently": "^9.0.0",
+    "playwright-bdd": "^8.5.1",
+    "typescript": "^5.6.0"
+  }
+}

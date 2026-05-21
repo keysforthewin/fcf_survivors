@@ -1,0 +1,304 @@
+import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg } from "@fcf/shared";
+import { ARENA, TICK } from "@fcf/shared";
+import { World, processLevelUps, type WorldDeps } from "./sim/world.ts";
+import { ClientView, buildSnapshot } from "./net/snapshot.ts";
+import { topLeaderboard, writeScore, ensureMongo } from "./db/scores.ts";
+import { createHash } from "node:crypto";
+
+interface SocketData {
+  id: string;
+  ip: string;
+  fishId: number | null;
+  view: ClientView;
+  startedAt: number;
+  name: string;
+  color: string;
+}
+
+export interface StartServerOpts {
+  /** TCP port for HTTP/WS. Defaults to env PORT or 4000. Pass 0 for ephemeral. */
+  port?: number;
+  /** Injected clock/rng for deterministic tests. Forwarded to the World. */
+  worldDeps?: WorldDeps;
+  /** Set false in tests to skip the periodic 15s leaderboard broadcast. */
+  periodicLeaderboard?: boolean;
+  /** Fire-and-forget ensureMongo at boot. Defaults true; tests pass false. */
+  connectMongo?: boolean;
+  /** Verbose logs. Defaults true; tests pass false. */
+  log?: boolean;
+}
+
+export interface RunningServer {
+  server: Bun.Server<SocketData>;
+  world: World;
+  port: number;
+  close: () => Promise<void>;
+}
+
+function sanitizeName(raw: string): string {
+  return raw.replace(/[^\w\- ]/g, "").trim().slice(0, 16) || "Fish";
+}
+
+function sanitizeColor(raw: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#7fcfff";
+}
+
+function ipHash(ip: string): string {
+  return createHash("sha256").update(ip).digest("hex").slice(0, 16);
+}
+
+export function startServer(opts: StartServerOpts = {}): RunningServer {
+  const PORT = opts.port ?? Number(process.env.PORT ?? 4000);
+  const world = new World(opts.worldDeps);
+  const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
+  let socketCounter = 0;
+  const log = opts.log ?? true;
+
+  if (opts.connectMongo ?? true) ensureMongo();
+
+  function send(ws: Bun.ServerWebSocket<SocketData>, msg: ServerMsg): void {
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {}
+  }
+
+  async function broadcastLeaderboard(target?: Bun.ServerWebSocket<SocketData>): Promise<void> {
+    const top = await topLeaderboard(10);
+    const msg: LeaderboardMsg = { t: "leaderboard", top };
+    if (target) {
+      send(target, msg);
+    } else {
+      for (const ws of sockets.values()) send(ws, msg);
+    }
+  }
+
+  let lbInterval: ReturnType<typeof setInterval> | null = null;
+  if (opts.periodicLeaderboard ?? true) {
+    lbInterval = setInterval(() => {
+      broadcastLeaderboard().catch(() => {});
+    }, 15_000);
+  }
+
+  // game loop
+  let lastTickAt = performance.now();
+  const tickInterval = setInterval(() => {
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - lastTickAt) / 1000);
+    lastTickAt = now;
+    const wallNow = world.now();
+
+    world.step(dt, wallNow);
+
+    // collect dead fish (snapshot stats BEFORE removal)
+    interface DeadPlayer {
+      fishId: number;
+      name: string;
+      color: string;
+      mass: number;
+      level: number;
+      kills: number;
+      spawnedAt: number;
+      killerName: string;
+      killerMass: number;
+    }
+    const deadPlayers: DeadPlayer[] = [];
+    const allDead: Array<{ x: number; y: number; mass: number; color: string }> = [];
+
+    for (const f of world.fish.values()) {
+      if (f.alive) continue;
+      allDead.push({ x: f.x, y: f.y, mass: f.mass, color: f.color });
+      if (!f.isAi && f.socketId) {
+        let killer: { name: string; mass: number } | null = null;
+        let bestMass = 0;
+        for (const other of world.fish.values()) {
+          if (other.id === f.id || !other.alive) continue;
+          const dx = other.x - f.x;
+          const dy = other.y - f.y;
+          if (dx * dx + dy * dy <= 250 * 250 && other.mass > bestMass) {
+            bestMass = other.mass;
+            killer = { name: other.name, mass: other.mass };
+          }
+        }
+        deadPlayers.push({
+          fishId: f.id,
+          name: f.name,
+          color: f.color,
+          mass: f.mass,
+          level: f.level,
+          kills: f.kills,
+          spawnedAt: f.spawnedAt,
+          killerName: killer?.name ?? "the void",
+          killerMass: killer?.mass ?? 0,
+        });
+      }
+    }
+
+    // spawn chunks and remove all dead fish
+    for (const d of allDead) {
+      const chunkCount = Math.min(8, Math.max(2, Math.ceil(d.mass / 12)));
+      const each = (d.mass * 0.6) / chunkCount;
+      for (let i = 0; i < chunkCount; i++) {
+        world.spawnChunk(d.x, d.y, each, d.color, wallNow);
+      }
+    }
+    for (const [id, f] of world.fish) {
+      if (!f.alive) world.removeFish(id);
+    }
+
+    // notify dead players + persist score
+    for (const dp of deadPlayers) {
+      const ws = [...sockets.values()].find((s) => s.data.fishId === dp.fishId);
+      if (!ws) continue;
+      const startedAt = ws.data.startedAt;
+      const durationMs = wallNow - startedAt;
+      send(ws, {
+        t: "eaten",
+        byName: dp.killerName,
+        byMass: dp.killerMass,
+        finalMass: dp.mass,
+        finalLevel: dp.level,
+        kills: dp.kills,
+        durationMs,
+      } satisfies EatenMsg);
+      ws.data.fishId = null;
+      writeScore({
+        name: dp.name,
+        color: dp.color,
+        finalMass: dp.mass,
+        level: dp.level,
+        kills: dp.kills,
+        durationMs,
+        killedBy: dp.killerName,
+        startedAt: new Date(startedAt),
+        endedAt: new Date(wallNow),
+        ipHash: ipHash(ws.data.ip),
+      }).catch(() => {});
+      broadcastLeaderboard(ws).catch(() => {});
+    }
+
+    // level up handling — extracted so tests and prod use the same code path
+    processLevelUps(world);
+
+    // send snapshots
+    for (const ws of sockets.values()) {
+      const fid = ws.data.fishId;
+      if (fid === null) continue;
+      const fish = world.fish.get(fid);
+      if (!fish) continue;
+      const snap = buildSnapshot(world, fish, ws.data.view, wallNow);
+      send(ws, snap);
+    }
+
+    // clear removed buffer
+    world.removedIds.length = 0;
+  }, TICK.ms);
+
+  // HTTP + WS server
+  const server = Bun.serve<SocketData>({
+    port: PORT,
+    fetch(req, srv) {
+      const url = new URL(req.url);
+      if (url.pathname === "/ws") {
+        const id = `s${++socketCounter}`;
+        const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? srv.requestIP(req)?.address ?? "unknown";
+        const ok = srv.upgrade(req, {
+          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "" },
+        });
+        if (ok) return undefined;
+        return new Response("Upgrade failed", { status: 500 });
+      }
+      if (url.pathname === "/leaderboard") {
+        return topLeaderboard(20)
+          .then((rows) => new Response(JSON.stringify(rows), { headers: { "content-type": "application/json" } }));
+      }
+      if (url.pathname === "/health") {
+        return new Response("ok");
+      }
+      return new Response("Fruit Cup Survivors server", { status: 200 });
+    },
+    websocket: {
+      open(ws) {
+        sockets.set(ws.data.id, ws);
+        broadcastLeaderboard(ws).catch(() => {});
+        if (log) console.log(`[ws] open ${ws.data.id} (${ws.data.ip})`);
+      },
+      message(ws, raw) {
+        if (typeof raw !== "string") return;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return;
+        }
+        const result = ClientMsg.safeParse(parsed);
+        if (!result.success) return;
+        const msg = result.data;
+        const now = world.now();
+        if (msg.t === "hello") {
+          if (ws.data.fishId !== null) return;
+          const name = sanitizeName(msg.name);
+          const color = sanitizeColor(msg.color);
+          const fish = world.spawnPlayer(name, color, ws.data.id);
+          ws.data.fishId = fish.id;
+          ws.data.startedAt = now;
+          ws.data.name = name;
+          ws.data.color = color;
+          ws.data.view = new ClientView();
+          send(ws, {
+            t: "welcome",
+            selfId: fish.id,
+            arena: { width: ARENA.width, height: ARENA.height },
+            tickHz: TICK.hz,
+          });
+        } else if (msg.t === "input") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          ws.data.view.ackSeq = msg.seq;
+          // clamp magnitude to 1
+          const mag = Math.hypot(msg.vx, msg.vy);
+          let nx = msg.vx;
+          let ny = msg.vy;
+          if (mag > 1) { nx /= mag; ny /= mag; }
+          world.applyInput(fish, nx, ny, msg.boost, now);
+        } else if (msg.t === "pickCard") {
+          // M4 territory — accept silently for now
+        }
+      },
+      close(ws) {
+        sockets.delete(ws.data.id);
+        const fid = ws.data.fishId;
+        if (fid !== null) {
+          const f = world.fish.get(fid);
+          if (f && f.alive) {
+            f.alive = false;
+          }
+        }
+        if (log) console.log(`[ws] close ${ws.data.id}`);
+      },
+    },
+  });
+
+  if (log) console.log(`[server] listening on http://localhost:${server.port}  ws: ws://localhost:${server.port}/ws`);
+
+  return {
+    server,
+    world,
+    port: server.port ?? PORT,
+    async close() {
+      clearInterval(tickInterval);
+      if (lbInterval) clearInterval(lbInterval);
+      // close all sockets so clients see a close event
+      for (const ws of sockets.values()) {
+        try { ws.close(); } catch {}
+      }
+      sockets.clear();
+      server.stop(true);
+    },
+  };
+}
+
+if (import.meta.main) {
+  startServer();
+}

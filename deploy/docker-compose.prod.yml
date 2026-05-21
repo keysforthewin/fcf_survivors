@@ -1,0 +1,28 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: fcf-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    command: ["mongod", "--quiet", "--port", "${MONGO_PORT:-27017}"]
+
+  server:
+    image: oven/bun:1
+    container_name: fcf-server
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URL: "mongodb://mongo:${MONGO_PORT:-27017}"
+      MONGO_DB: fcf_survivors
+      PORT: "${SERVER_PORT:-4000}"
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-4000}:${SERVER_PORT:-4000}"
+    volumes:
+      - .:/app
+    command: ["bun", "/app/server/index.js"]
+
+volumes:
+  mongo-data:
