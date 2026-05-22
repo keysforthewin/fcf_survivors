@@ -19,6 +19,7 @@ export const FISH = {
   massTaxOnEat: 0.2,
   hpPerMass: 2,
   minHp: 20,
+  damageMassLossRatio: 0.25,
 } as const;
 
 export const PELLET = {

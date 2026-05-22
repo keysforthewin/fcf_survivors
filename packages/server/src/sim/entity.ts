@@ -1,4 +1,26 @@
-import type { EntityId } from "@fcf/shared";
+import type { EntityId, WeaponId, LevelUpCard } from "@fcf/shared";
+
+export interface WeaponSlot {
+  id: WeaponId;
+  level: number;
+  cooldownReadyAt: number;
+  /** Per-weapon volatile state. Trail uses {lastDropAt}. Orbital uses {phase, projectileIds}. */
+  state?: TrailState | OrbitalState;
+}
+
+export interface TrailState {
+  kind: "trail";
+  lastDropAt: number;
+}
+
+export interface OrbitalState {
+  kind: "orbital";
+  phase: number;
+  projectileIds: number[];
+}
+
+export type PassiveId =
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry";
 
 export interface Fish {
   id: EntityId;
@@ -9,6 +31,9 @@ export interface Fish {
   vy: number;
   targetVx: number;
   targetVy: number;
+  /** Unit-vector heading remembered when the fish was last moving. Used to aim weapons when idle. */
+  headingX: number;
+  headingY: number;
   mass: number;
   hp: number;
   maxHp: number;
@@ -25,6 +50,9 @@ export interface Fish {
   socketId: string | null; // null for AI
   alive: boolean;
   aiState?: AiState;
+  weapons: WeaponSlot[];
+  passives: Map<PassiveId, number>;
+  pendingLevelUp: LevelUpCard[];
 }
 
 export interface AiState {
@@ -54,4 +82,27 @@ export interface Chunk {
   expiresAt: number;
 }
 
-export type AnyEntity = Fish | Pellet | Chunk;
+export type ProjectileBehavior = "linear" | "orbital" | "static";
+
+export interface Projectile {
+  id: EntityId;
+  kind: "projectile";
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ownerId: EntityId;
+  weaponId: WeaponId;
+  damage: number;
+  radius: number;
+  expiresAt: number;
+  behavior: ProjectileBehavior;
+  /** Per-target last-hit timestamp for orbital/trail/pulse re-hit gating. */
+  hits: Map<EntityId, number>;
+  reHitMs: number;
+  /** Orbital-only: orbit angle + radius (relative to owner). */
+  orbitPhase?: number;
+  orbitRadius?: number;
+}
+
+export type AnyEntity = Fish | Pellet | Chunk | Projectile;

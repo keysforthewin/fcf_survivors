@@ -1,14 +1,7 @@
-import type { EntityDelta, SnapshotMsg } from "@fcf/shared";
+import type { EntityDelta, SnapshotMsg, YouWeaponSlot } from "@fcf/shared";
 import { viewRadius, xpForLevel } from "@fcf/shared";
 import type { World } from "../sim/world.ts";
 import type { Fish } from "../sim/entity.ts";
-
-interface PrevFishState {
-  x: number;
-  y: number;
-  mass: number;
-  hp: number;
-}
 
 export class ClientView {
   // last sent state per entity id, used for change detection
@@ -82,6 +75,30 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     view.prevSent.set(c.id, { kind: "chunk", x: c.x, y: c.y });
   }
 
+  for (const proj of world.projectiles.values()) {
+    const dx = proj.x - self.x;
+    const dy = proj.y - self.y;
+    // include projectiles within view OR within their own radius of self (so pulse rings always show)
+    if (dx * dx + dy * dy > r2 && (Math.hypot(dx, dy) - proj.radius) > r) continue;
+    seen.add(proj.id);
+    const prev = view.prevSent.get(proj.id);
+    const delta: EntityDelta = {
+      id: proj.id,
+      kind: "projectile",
+      x: Math.round(proj.x),
+      y: Math.round(proj.y),
+    };
+    if (!prev) {
+      delta.vx = Math.round(proj.vx);
+      delta.vy = Math.round(proj.vy);
+      delta.weaponId = proj.weaponId;
+      delta.ownerId = proj.ownerId;
+      delta.radius = Math.round(proj.radius);
+    }
+    entities.push(delta);
+    view.prevSent.set(proj.id, { kind: "projectile", x: proj.x, y: proj.y });
+  }
+
   // anything we previously sent but no longer see -> removed
   const removed: number[] = [];
   for (const [id] of view.prevSent) {
@@ -92,6 +109,11 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
   }
 
   const nextLevelXp = xpForLevel(self.level);
+  const weapons: YouWeaponSlot[] = self.weapons.map((s) => ({
+    id: s.id,
+    level: s.level,
+    cooldownReadyAt: s.cooldownReadyAt,
+  }));
 
   return {
     t: "snapshot",
@@ -108,6 +130,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       nextLevelXp,
       boostReadyAt: self.boostReadyAt,
       serverNow: now,
+      weapons,
     },
     entities,
     removed,

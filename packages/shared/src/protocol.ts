@@ -50,6 +50,12 @@ export interface EntityDelta {
   isAi?: boolean;
 }
 
+export interface YouWeaponSlot {
+  id: string;
+  level: number;
+  cooldownReadyAt: number;
+}
+
 export interface SnapshotMsg {
   t: "snapshot";
   tick: number;
@@ -65,6 +71,7 @@ export interface SnapshotMsg {
     nextLevelXp: number;
     boostReadyAt: number;
     serverNow: number;
+    weapons: YouWeaponSlot[];
   };
   entities: EntityDelta[];
   removed: number[];
@@ -83,6 +90,9 @@ export interface LevelUpMsg {
   cards: LevelUpCard[];
 }
 
+export interface OwnedWeapon { id: string; level: number; }
+export interface OwnedPassive { id: string; stack: number; }
+
 export interface EatenMsg {
   t: "eaten";
   byName: string;
@@ -91,6 +101,9 @@ export interface EatenMsg {
   finalLevel: number;
   kills: number;
   durationMs: number;
+  weapons: OwnedWeapon[];
+  passives: OwnedPassive[];
+  evolution: string | null;
 }
 
 export interface LeaderboardEntry {
@@ -99,6 +112,7 @@ export interface LeaderboardEntry {
   finalMass: number;
   level: number;
   endedAt: number;
+  evolution?: string | null;
 }
 
 export interface LeaderboardMsg {

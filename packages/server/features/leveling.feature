@@ -1,7 +1,7 @@
 Feature: XP and level progression
   XP accumulates from eating; crossing the xpForLevel curve promotes the
-  player. The M4 card system will replace the placeholder +3 mass / +6 maxHp
-  reward — these scenarios pin it so the swap is intentional.
+  player and queues a level-up card modal. Only one level-up fires per
+  processLevelUps call — further levels wait until the player picks a card.
 
   Background:
     Given a fresh world
@@ -13,13 +13,21 @@ Feature: XP and level progression
     When the world advances 1 tick
     Then "Alpha" has XP 2
 
-  Scenario: 100 XP promotes the player from level 1 to level 5
+  Scenario: Crossing the XP threshold promotes one level and queues a card modal
     Given a player "Alpha" at (1000, 1000) with mass 10
     And "Alpha" has accumulated 100 XP
     When level-ups are processed
-    Then "Alpha" has level 5
-    And "Alpha" has XP 12
-    And "Alpha" has mass 22
+    Then "Alpha" has level 2
+    And "Alpha" has XP 87
+    And "Alpha" has a pending level-up modal
+
+  Scenario: Level-ups do not cascade while a card modal is pending
+    Given a player "Alpha" at (1000, 1000) with mass 10
+    And "Alpha" has accumulated 100 XP
+    When level-ups are processed
+    And level-ups are processed
+    Then "Alpha" has level 2
+    And "Alpha" has XP 87
 
   Scenario: AI fish do not level up
     Given an AI fish "Bob" at (1000, 1000) with mass 50

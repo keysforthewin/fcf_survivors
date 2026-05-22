@@ -28,6 +28,8 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
     vy: 0,
     targetVx: 0,
     targetVy: 0,
+    headingX: 1,
+    headingY: 0,
     mass,
     hp: fishHp(mass),
     maxHp: fishHp(mass),
@@ -43,6 +45,9 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
     spawnedAt: sim.clock.now(),
     socketId: seed.socketId ?? (seed.isAi ? null : `test-${id}`),
     alive: true,
+    weapons: [],
+    passives: new Map(),
+    pendingLevelUp: [],
   };
   if (seed.isAi) {
     const aiState: AiState = {
@@ -113,6 +118,28 @@ Given(
   function (this: TestWorld, x: number, y: number, mass: number) {
     const sim = ensureSim(this);
     sim.world.spawnChunk(x, y, mass, "#ffdf80", sim.clock.now());
+  }
+);
+
+/* -------- Loadout -------- */
+
+Given(
+  "{string} has weapon {string} at level {int}",
+  function (this: TestWorld, name: string, weaponId: string, level: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    if (!f) throw new Error(`No fish named ${name}`);
+    f.weapons.push({ id: weaponId as never, level, cooldownReadyAt: 0 });
+  }
+);
+
+Given(
+  "{string} starts with HP {int}",
+  function (this: TestWorld, name: string, hp: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    if (!f) throw new Error(`No fish named ${name}`);
+    f.hp = hp;
   }
 );
 

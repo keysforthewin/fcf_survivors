@@ -1,6 +1,7 @@
-import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg } from "@fcf/shared";
+import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, parseCardId } from "@fcf/shared";
 import { ARENA, TICK } from "@fcf/shared";
-import { World, processLevelUps, type WorldDeps } from "./sim/world.ts";
+import { World, type WorldDeps } from "./sim/world.ts";
+import { processLevelUps, applyCard } from "./sim/levelup.ts";
 import { ClientView, buildSnapshot } from "./net/snapshot.ts";
 import { topLeaderboard, writeScore, ensureMongo } from "./db/scores.ts";
 import { createHash } from "node:crypto";
@@ -13,6 +14,8 @@ interface SocketData {
   startedAt: number;
   name: string;
   color: string;
+  /** Level we've already pushed a LevelUpMsg for, so we don't spam. Reset on pickCard. */
+  levelUpSentForLevel: number | null;
 }
 
 export interface StartServerOpts {
@@ -100,6 +103,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       spawnedAt: number;
       killerName: string;
       killerMass: number;
+      weapons: Array<{ id: string; level: number }>;
+      passives: Array<{ id: string; stack: number }>;
+      evolution: string | null;
     }
     const deadPlayers: DeadPlayer[] = [];
     const allDead: Array<{ x: number; y: number; mass: number; color: string }> = [];
@@ -119,6 +125,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
             killer = { name: other.name, mass: other.mass };
           }
         }
+        const EVOLUTION_IDS = new Set(["tidal", "puffer", "eel", "kraken", "school"]);
+        const evolution = f.weapons.find((s) => EVOLUTION_IDS.has(s.id))?.id ?? null;
         deadPlayers.push({
           fishId: f.id,
           name: f.name,
@@ -129,6 +137,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           spawnedAt: f.spawnedAt,
           killerName: killer?.name ?? "the void",
           killerMass: killer?.mass ?? 0,
+          weapons: f.weapons.map((s) => ({ id: s.id, level: s.level })),
+          passives: [...f.passives.entries()].map(([id, stack]) => ({ id, stack })),
+          evolution,
         });
       }
     }
@@ -159,6 +170,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         finalLevel: dp.level,
         kills: dp.kills,
         durationMs,
+        weapons: dp.weapons,
+        passives: dp.passives,
+        evolution: dp.evolution,
       } satisfies EatenMsg);
       ws.data.fishId = null;
       writeScore({
@@ -172,12 +186,35 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         startedAt: new Date(startedAt),
         endedAt: new Date(wallNow),
         ipHash: ipHash(ws.data.ip),
+        weapons: dp.weapons,
+        passives: dp.passives,
+        evolution: dp.evolution,
       }).catch(() => {});
       broadcastLeaderboard(ws).catch(() => {});
     }
 
     // level up handling — extracted so tests and prod use the same code path
     processLevelUps(world);
+
+    // dispatch level-up modals to players whose pendingLevelUp just populated
+    for (const ws of sockets.values()) {
+      const fid = ws.data.fishId;
+      if (fid === null) continue;
+      const fish = world.fish.get(fid);
+      if (!fish || !fish.alive) continue;
+      if (fish.pendingLevelUp.length === 0) {
+        ws.data.levelUpSentForLevel = null;
+        continue;
+      }
+      if (ws.data.levelUpSentForLevel === fish.level) continue;
+      const msg: LevelUpMsg = {
+        t: "levelUp",
+        level: fish.level,
+        cards: fish.pendingLevelUp,
+      };
+      send(ws, msg);
+      ws.data.levelUpSentForLevel = fish.level;
+    }
 
     // send snapshots
     for (const ws of sockets.values()) {
@@ -202,13 +239,15 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         const id = `s${++socketCounter}`;
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? srv.requestIP(req)?.address ?? "unknown";
         const ok = srv.upgrade(req, {
-          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "" },
+          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentForLevel: null },
         });
         if (ok) return undefined;
         return new Response("Upgrade failed", { status: 500 });
       }
       if (url.pathname === "/leaderboard") {
-        return topLeaderboard(20)
+        const sortParam = url.searchParams.get("sort");
+        const sort = sortParam === "recent" || sortParam === "kills" ? sortParam : "mass";
+        return topLeaderboard(20, sort)
           .then((rows) => new Response(JSON.stringify(rows), { headers: { "content-type": "application/json" } }));
       }
       if (url.pathname === "/health") {
@@ -263,7 +302,17 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (mag > 1) { nx /= mag; ny /= mag; }
           world.applyInput(fish, nx, ny, msg.boost, now);
         } else if (msg.t === "pickCard") {
-          // M4 territory — accept silently for now
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          if (fish.pendingLevelUp.length === 0) return;
+          const parsed = parseCardId(msg.cardId);
+          if (!parsed) return;
+          const ok = applyCard(world, fish, msg.cardId, parsed);
+          if (ok) {
+            ws.data.levelUpSentForLevel = null;
+          }
         }
       },
       close(ws) {

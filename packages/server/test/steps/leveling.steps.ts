@@ -2,7 +2,7 @@ import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
 import { TestWorld } from "../support/world.ts";
 import { tryFish } from "../support/world-factory.ts";
-import { processLevelUps } from "../../src/sim/world.ts";
+import { processLevelUps } from "../../src/sim/levelup.ts";
 import { xpForLevel } from "@fcf/shared";
 
 When("level-ups are processed", function (this: TestWorld) {
@@ -40,3 +40,12 @@ Then(
     assert.equal(xpForLevel(_lvl), expected);
   }
 );
+
+Then("{string} has a pending level-up modal", function (this: TestWorld, name: string) {
+  const f = tryFish(this.requireSim(), name);
+  assert.ok(f, `${name} missing`);
+  assert.ok(
+    f.pendingLevelUp.length > 0,
+    `Expected ${name} to have a pending level-up modal, got ${f.pendingLevelUp.length} cards`
+  );
+});

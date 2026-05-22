@@ -1,3 +1,5 @@
+import { initSound } from "../sound.ts";
+
 const COLOR_PALETTE = [
   "#ffd97f", "#ff85a1", "#7fcfff", "#9affcf",
   "#caa8ff", "#ff9fa4", "#8fffd8", "#ffa07f",
@@ -55,6 +57,8 @@ export function showTitle(prefill?: Partial<TitleResult>): Promise<TitleResult> 
     });
 
     const submit = () => {
+      // First user gesture — initialise audio (browsers require gesture for AudioContext.start).
+      initSound();
       const name = (input.value.trim() || "Fish").slice(0, 16);
       overlay.remove();
       resolve({ name, color });

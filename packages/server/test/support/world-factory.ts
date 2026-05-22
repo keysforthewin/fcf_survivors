@@ -76,6 +76,8 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       vy: 0,
       targetVx: 0,
       targetVy: 0,
+      headingX: 1,
+      headingY: 0,
       mass,
       hp: fishHp(mass),
       maxHp: fishHp(mass),
@@ -91,6 +93,9 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       spawnedAt: t,
       socketId: seed.socketId ?? (seed.isAi ? null : `test-${id}`),
       alive: true,
+      weapons: [],
+      passives: new Map(),
+      pendingLevelUp: [],
     };
     if (seed.isAi) {
       fish.aiState = {

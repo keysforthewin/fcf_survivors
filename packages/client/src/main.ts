@@ -62,6 +62,9 @@ async function main() {
             finalLevel: 1,
             kills: 0,
             durationMs: 0,
+            weapons: [],
+            passives: [],
+            evolution: null,
           };
         }
         resolve();

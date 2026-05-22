@@ -1,7 +1,12 @@
-import { ARENA, FISH, PELLET, TICK, canEat, fishHp, fishRadius, xpForLevel } from "@fcf/shared";
-import type { Fish, Pellet, Chunk } from "./entity.ts";
+import { ARENA, FISH, PELLET, TICK, canEat, fishHp, fishRadius } from "@fcf/shared";
+import type { WeaponId } from "@fcf/shared";
+import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
 import { maintainAiPopulation, updateAi } from "./ai.ts";
+import { tryFireWeapons, applyProjectileDamage } from "./weapon.ts";
+import { getMoveSpeed, getBoostCooldown, getMaxHp, getPickupRadius, getPelletXp, getFishEatMass } from "./passives.ts";
+
+const MAX_PROJECTILES = 400;
 
 const PELLET_PALETTE = [
   "#ff85a1", "#ffdf80", "#80ffa1", "#80d8ff", "#c8a0ff", "#fffa80",
@@ -22,6 +27,7 @@ export class World {
   fish = new Map<number, Fish>();
   pellets = new Map<number, Pellet>();
   chunks = new Map<number, Chunk>();
+  projectiles = new Map<number, Projectile>();
   removedIds: number[] = [];
 
   private idCounter = 1;
@@ -38,6 +44,7 @@ export class World {
   fishHash = new SpatialHash<Fish>(256);
   pelletHash = new SpatialHash<Pellet>(128);
   chunkHash = new SpatialHash<Chunk>(128);
+  projectileHash = new SpatialHash<Projectile>(128);
 
   constructor(deps: WorldDeps = {}) {
     this.now = deps.now ?? Date.now;
@@ -60,6 +67,8 @@ export class World {
       vy: 0,
       targetVx: 0,
       targetVy: 0,
+      headingX: 1,
+      headingY: 0,
       mass: FISH.startMass,
       hp: fishHp(FISH.startMass),
       maxHp: fishHp(FISH.startMass),
@@ -75,6 +84,11 @@ export class World {
       spawnedAt: this.now(),
       socketId,
       alive: true,
+      weapons: [
+        { id: "bubble", level: 1, cooldownReadyAt: this.now() + 600 },
+      ],
+      passives: new Map(),
+      pendingLevelUp: [],
     };
     this.fish.set(fish.id, fish);
     return fish;
@@ -90,6 +104,61 @@ export class World {
 
   removeChunk(id: number): void {
     if (this.chunks.delete(id)) this.removedIds.push(id);
+  }
+
+  removeProjectile(id: number): void {
+    if (this.projectiles.delete(id)) this.removedIds.push(id);
+  }
+
+  spawnProjectile(opts: {
+    ownerId: number;
+    weaponId: WeaponId;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    damage: number;
+    radius: number;
+    expiresAt: number;
+    behavior: ProjectileBehavior;
+    reHitMs: number;
+    orbitPhase?: number;
+    orbitRadius?: number;
+  }): Projectile {
+    if (this.projectiles.size >= MAX_PROJECTILES) {
+      // Silent drop on cap. Reuse the requested id so callers don't crash.
+      const dummy: Projectile = {
+        id: -1,
+        kind: "projectile",
+        x: opts.x, y: opts.y, vx: opts.vx, vy: opts.vy,
+        ownerId: opts.ownerId, weaponId: opts.weaponId,
+        damage: 0, radius: opts.radius,
+        expiresAt: 0,
+        behavior: opts.behavior,
+        hits: new Map(),
+        reHitMs: opts.reHitMs,
+        orbitPhase: opts.orbitPhase,
+        orbitRadius: opts.orbitRadius,
+      };
+      return dummy;
+    }
+    const proj: Projectile = {
+      id: this.nextId(),
+      kind: "projectile",
+      x: opts.x, y: opts.y, vx: opts.vx, vy: opts.vy,
+      ownerId: opts.ownerId,
+      weaponId: opts.weaponId,
+      damage: opts.damage,
+      radius: opts.radius,
+      expiresAt: opts.expiresAt,
+      behavior: opts.behavior,
+      hits: new Map(),
+      reHitMs: opts.reHitMs,
+      orbitPhase: opts.orbitPhase,
+      orbitRadius: opts.orbitRadius,
+    };
+    this.projectiles.set(proj.id, proj);
+    return proj;
   }
 
   spawnPellet(): Pellet {
@@ -122,14 +191,19 @@ export class World {
     return c;
   }
 
-  /** Apply input to a player fish. */
+  /** Apply input to a player fish. While a level-up modal is open the fish brakes to zero. */
   applyInput(fish: Fish, vx: number, vy: number, boost: boolean, now: number): void {
+    if (fish.pendingLevelUp.length > 0) {
+      fish.targetVx = 0;
+      fish.targetVy = 0;
+      return;
+    }
     fish.targetVx = vx;
     fish.targetVy = vy;
     if (boost && now >= fish.boostReadyAt) {
       fish.boost = true;
       fish.boostUntil = now + FISH.boostDurationMs;
-      fish.boostReadyAt = now + FISH.boostCooldownMs;
+      fish.boostReadyAt = now + getBoostCooldown(fish);
     }
   }
 
@@ -157,7 +231,8 @@ export class World {
       if (!f.alive) continue;
       if (!f.isAi) {
         if (f.boost && now >= f.boostUntil) f.boost = false;
-        const speed = FISH.baseSpeed * (f.boost ? FISH.boostMultiplier : 1);
+        const baseSpeed = getMoveSpeed(f);
+        const speed = baseSpeed * (f.boost ? FISH.boostMultiplier : 1);
         const desiredVx = f.targetVx * speed;
         const desiredVy = f.targetVy * speed;
         const accel = 10 * dtSec;
@@ -166,6 +241,12 @@ export class World {
       }
       f.x += f.vx * dtSec;
       f.y += f.vy * dtSec;
+      // update remembered heading from velocity when moving — used to aim weapons when idle
+      const vmag = Math.hypot(f.vx, f.vy);
+      if (vmag > 5) {
+        f.headingX = f.vx / vmag;
+        f.headingY = f.vy / vmag;
+      }
       // clamp to arena
       const r = fishRadius(f.mass);
       if (f.x < r) { f.x = r; f.vx = 0; }
@@ -183,29 +264,49 @@ export class World {
       if (now >= c.expiresAt) this.removeChunk(c.id);
     }
 
+    // integrate projectiles (linear move + expiry). orbital positions are refreshed inside tickOrbital.
+    for (const p of this.projectiles.values()) {
+      if (p.behavior === "linear") {
+        p.x += p.vx * dtSec;
+        p.y += p.vy * dtSec;
+      }
+      if (now >= p.expiresAt) this.removeProjectile(p.id);
+    }
+
     // rebuild spatial hashes for collision
     this.fishHash.clear();
     this.pelletHash.clear();
     this.chunkHash.clear();
+    this.projectileHash.clear();
     for (const f of this.fish.values()) if (f.alive) this.fishHash.insert(f.x, f.y, f);
     for (const p of this.pellets.values()) this.pelletHash.insert(p.x, p.y, p);
     for (const c of this.chunks.values()) this.chunkHash.insert(c.x, c.y, c);
+    for (const p of this.projectiles.values()) this.projectileHash.insert(p.x, p.y, p);
+
+    // fire weapons for each living non-AI fish (also ticks orbital/trail)
+    for (const f of this.fish.values()) {
+      tryFireWeapons(this, f, now);
+    }
+
+    // apply projectile damage to bigger-than-owner targets
+    applyProjectileDamage(this, now);
 
     // collisions: fish eat pellets
     const scratch: any[] = [];
     for (const f of this.fish.values()) {
       if (!f.alive) continue;
-      const r = fishRadius(f.mass);
+      const baseR = fishRadius(f.mass);
+      const pickupR = f.isAi ? baseR : getPickupRadius(baseR, f);
       scratch.length = 0;
-      this.pelletHash.query(f.x, f.y, r + PELLET.radius, scratch);
+      this.pelletHash.query(f.x, f.y, pickupR + PELLET.radius, scratch);
       for (const p of scratch as Pellet[]) {
         const dx = f.x - p.x;
         const dy = f.y - p.y;
-        if (dx * dx + dy * dy <= r * r) {
+        if (dx * dx + dy * dy <= pickupR * pickupR) {
           this.removePellet(p.id);
           f.mass += PELLET.massGain;
-          f.xp += 1;
-          f.maxHp = fishHp(f.mass);
+          f.xp += f.isAi ? 1 : getPelletXp(1, f);
+          f.maxHp = f.isAi ? fishHp(f.mass) : getMaxHp(f);
           f.hp = Math.min(f.maxHp, f.hp + 1);
         }
       }
@@ -224,13 +325,13 @@ export class World {
           this.removeChunk(c.id);
           f.mass += c.mass * (1 - FISH.massTaxOnEat);
           f.xp += Math.max(1, Math.floor(c.mass * 0.5));
-          f.maxHp = fishHp(f.mass);
+          f.maxHp = f.isAi ? fishHp(f.mass) : getMaxHp(f);
           f.hp = Math.min(f.maxHp, f.hp + c.mass);
         }
       }
     }
 
-    // (level-ups are applied by processLevelUps below)
+    // (level-ups are applied by processLevelUps; see sim/levelup.ts)
 
     // collisions: fish eat smaller fish
     const fishList = [...this.fish.values()];
@@ -250,8 +351,9 @@ export class World {
         const threshold = rA - rB * 0.5;
         if (dist2 <= threshold * threshold) {
           // a eats b
-          a.mass += b.mass * (1 - FISH.massTaxOnEat);
-          a.maxHp = fishHp(a.mass);
+          const baseGain = b.mass * (1 - FISH.massTaxOnEat);
+          a.mass += a.isAi ? baseGain : getFishEatMass(baseGain, a);
+          a.maxHp = a.isAi ? fishHp(a.mass) : getMaxHp(a);
           a.hp = Math.min(a.maxHp, a.hp + b.mass * 0.5);
           a.kills += 1;
           a.xp += Math.max(5, Math.floor(b.mass * 1.5));
@@ -259,21 +361,6 @@ export class World {
           // mark b for removal at end of tick (handled by caller)
         }
       }
-    }
-  }
-}
-
-/** Apply level-ups to all living player fish: spends xp, increments level, applies placeholder rewards.
- *  Extracted so tests (and the server tick loop) call the same code path. */
-export function processLevelUps(world: World): void {
-  for (const fish of world.fish.values()) {
-    if (!fish.alive || fish.isAi) continue;
-    while (fish.xp >= xpForLevel(fish.level)) {
-      fish.xp -= xpForLevel(fish.level);
-      fish.level += 1;
-      fish.mass += 3;
-      fish.maxHp += 6;
-      fish.hp = fish.maxHp;
     }
   }
 }

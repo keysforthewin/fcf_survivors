@@ -30,6 +30,8 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     vy: 0,
     targetVx: 0,
     targetVy: 0,
+    headingX: 1,
+    headingY: 0,
     mass: m,
     hp: fishHp(m),
     maxHp: fishHp(m),
@@ -51,6 +53,9 @@ export function spawnAiFish(world: World, mass?: number): Fish {
       wanderHeading: rng() * Math.PI * 2,
       targetId: null,
     },
+    weapons: [],
+    passives: new Map(),
+    pendingLevelUp: [],
   };
   return fish;
 }
