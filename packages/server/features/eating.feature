@@ -57,8 +57,9 @@ Feature: Eating mechanics
     When the world advances 1 tick
     Then "Beta" is dead
 
-  Scenario: A predator that only grazes the edge of a smaller fish does not eat it
+  Scenario: A predator that grazes a smaller fish on its flank does not eat it
     Given a player "Alpha" at (1000, 1000) with mass 100
+    And "Alpha" has heading (0, 1)
     And a player "Beta" at (1020, 1000) with mass 10
     When the world advances 1 tick
     Then "Beta" is alive

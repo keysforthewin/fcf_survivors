@@ -61,6 +61,65 @@ export class ParticleSystem {
     }
   }
 
+  /** A bigger, juicier eat-burst layered with a quick radial flash. Use when a fish gets chomped. */
+  emitChomp(x: number, y: number, color: number, mass: number): void {
+    const count = Math.min(50, Math.max(18, Math.floor(mass / 1.5)));
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const speed = 120 + Math.random() * 280;
+      const size = 2.5 + Math.random() * 5;
+      this.spawn({
+        x, y,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        ax: 0, ay: 0,
+        drag: 0.9,
+        lifeMs: 500 + Math.random() * 500,
+        startSize: size,
+        endSize: 0,
+        startAlpha: 1,
+        color,
+      });
+    }
+    // Bright flash that shrinks fast — gives the moment some punch.
+    this.spawn({
+      x, y,
+      vx: 0, vy: 0, ax: 0, ay: 0,
+      drag: 1,
+      lifeMs: 220,
+      startSize: Math.min(80, 14 + Math.sqrt(mass) * 3),
+      endSize: 0,
+      startAlpha: 0.75,
+      color: 0xffffff,
+    });
+  }
+
+  /** Stream of particles drawn from `from` to `to` — telegraphs the suction before a chomp. */
+  emitSuction(fromX: number, fromY: number, toX: number, toY: number, color: number): void {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    for (let i = 0; i < 4; i++) {
+      const startT = Math.random();
+      const sx = fromX + dx * startT + (Math.random() - 0.5) * 8;
+      const sy = fromY + dy * startT + (Math.random() - 0.5) * 8;
+      this.spawn({
+        x: sx, y: sy,
+        vx: nx * (180 + Math.random() * 80),
+        vy: ny * (180 + Math.random() * 80),
+        ax: 0, ay: 0,
+        drag: 0.94,
+        lifeMs: 280,
+        startSize: 2.5,
+        endSize: 0,
+        startAlpha: 0.85,
+        color,
+      });
+    }
+  }
+
   emitBoostTrail(x: number, y: number, vx: number, vy: number, color: number): void {
     for (let i = 0; i < 2; i++) {
       const jx = (Math.random() - 0.5) * 6;

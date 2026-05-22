@@ -62,8 +62,24 @@ export const VIEW = {
   perLogMass: 200,
 } as const;
 
+export const SPEED_PENALTY = {
+  startAtMass: 500,
+  fullPenaltyAtMass: 5000,
+  minMult: 0.15,
+  curveExp: 1.5,
+  boostShrink: 0.75,
+  boostMinMs: 350,
+} as const;
+
+export const MOUTH = {
+  coneCos: 0.5,
+  suctionExtraRadius: 6,
+  suctionPullPerTick: 0.45,
+  stationaryHeadingEps: 0.05,
+} as const;
+
 export function fishRadius(mass: number): number {
-  return Math.sqrt(mass) * FISH.radiusK + 6;
+  return Math.pow(Math.max(1, mass), 0.7) + 8;
 }
 
 export function fishHp(mass: number): number {
@@ -76,6 +92,23 @@ export function viewRadius(mass: number): number {
 
 export function canEat(predatorMass: number, preyMass: number): boolean {
   return predatorMass >= preyMass * FISH.eatRatio;
+}
+
+export function massPenaltyT(mass: number): number {
+  const span = SPEED_PENALTY.fullPenaltyAtMass - SPEED_PENALTY.startAtMass;
+  return Math.max(0, Math.min(1, (mass - SPEED_PENALTY.startAtMass) / span));
+}
+
+export function massSpeedMult(mass: number): number {
+  const t = massPenaltyT(mass);
+  const drop = Math.pow(t, SPEED_PENALTY.curveExp) * (1 - SPEED_PENALTY.minMult);
+  return 1 - drop;
+}
+
+export function boostDurationMs(mass: number): number {
+  const t = massPenaltyT(mass);
+  const shrink = Math.pow(t, SPEED_PENALTY.curveExp) * SPEED_PENALTY.boostShrink;
+  return Math.max(SPEED_PENALTY.boostMinMs, FISH.boostDurationMs * (1 - shrink));
 }
 
 export function xpForLevel(level: number): number {

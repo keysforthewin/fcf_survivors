@@ -1,4 +1,4 @@
-import { AI, ARENA, fishHp, canEat } from "@fcf/shared";
+import { AI, ARENA, fishHp, canEat, massSpeedMult } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
 
@@ -310,8 +310,9 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   fish.targetVx = tvx;
   fish.targetVy = tvy;
 
-  const desiredVx = tvx * speed;
-  const desiredVy = tvy * speed;
+  const massMult = massSpeedMult(fish.mass);
+  const desiredVx = tvx * speed * massMult;
+  const desiredVy = tvy * speed * massMult;
   const accel = 8 * dt;
   fish.vx += (desiredVx - fish.vx) * accel;
   fish.vy += (desiredVy - fish.vy) * accel;

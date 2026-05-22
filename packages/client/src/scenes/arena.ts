@@ -2,7 +2,7 @@ import { Application, Container, Graphics } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouWeaponSlot, LevelUpMsg } from "@fcf/shared";
-import { ARENA, fishRadius, WEAPONS, getWeaponLevel, viewRadius } from "@fcf/shared";
+import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, viewRadius } from "@fcf/shared";
 import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
@@ -81,6 +81,7 @@ const INTERP_DELAY_MS = 100;
 export interface ArenaCallbacks {
   onDeath(msg: EatenMsg): void;
   onLeaderboard(msg: LeaderboardMsg): void;
+  onWelcome?(msg: WelcomeMsg): void;
 }
 
 export class ArenaScene {
@@ -136,6 +137,19 @@ export class ArenaScene {
   private boostFxUntil = 0;
   private prevSelfX = 0;
   private prevSelfY = 0;
+  // spectator state
+  private mode: "play" | "spectate" = "play";
+  private spectatorAnchor: number | null = null;
+  private spectatorCam = { x: ARENA.width / 2, y: ARENA.height / 2 };
+  private spectatorHeartbeat: number | null = null;
+  private spectatorHud: HTMLElement | null = null;
+  private spectatorKeysDown = new Set<string>();
+  private onSpectatorKey: ((e: KeyboardEvent) => void) | null = null;
+  private onSpectatorKeyUp: ((e: KeyboardEvent) => void) | null = null;
+  private spectatorDiveCb: (() => void) | null = null;
+  // heading cache per fish id (server-sent unit vector)
+  private fishHeading = new Map<number, { hx: number; hy: number }>();
+  private mouthIndicators = new Map<number, Graphics>();
 
   constructor(app: Application, net: NetSocket, callbacks: ArenaCallbacks) {
     this.app = app;
@@ -220,6 +234,7 @@ export class ArenaScene {
   private bindNetwork(): void {
     this.net.on("welcome", (msg: WelcomeMsg) => {
       if (msg.selfId) this.selfId = msg.selfId;
+      this.callbacks.onWelcome?.(msg);
     });
     this.net.on("snapshot", (msg) => {
       const span = perf.begin("snapshot");
@@ -229,6 +244,9 @@ export class ArenaScene {
     this.net.on("eaten", (msg) => {
       this.tearDownLevelUp();
       snd.playDeath();
+      // Auto-enter spectator mode so the live game stays rendered behind the
+      // death overlay; main.ts decides whether to surface the spectator HUD.
+      this.enterSpectatorMode();
       this.callbacks.onDeath(msg);
     });
     this.net.on("leaderboard", (msg) => this.callbacks.onLeaderboard(msg));
@@ -344,44 +362,46 @@ export class ArenaScene {
 
   private applySnapshot(msg: SnapshotMsg): void {
     const recvTime = performance.now();
-    this.serverNow = msg.you.serverNow;
-    this.clientServerOffset = msg.you.serverNow - Date.now();
+    this.serverNow = msg.serverNow;
+    this.clientServerOffset = msg.serverNow - Date.now();
 
-    // FX: detect changes to self state
-    const massBefore = this.prevYouMass;
-    const hpBefore = this.prevYouHp;
-    const boostReadyBefore = this.prevBoostReadyAt;
-    this.youMass = msg.you.mass;
-    this.youLevel = msg.you.level;
-    this.youXp = msg.you.xp;
-    this.youNextLevelXp = msg.you.nextLevelXp;
-    this.youBoostReadyAt = msg.you.boostReadyAt;
-    this.youWeapons = msg.you.weapons;
-    if (massBefore >= 0 && msg.you.mass - massBefore > 4) {
-      // big mass jump means we ate a fish
-      snd.playEat(msg.you.mass);
-      const myColor = parseColor((window as any).__playerColor ?? "#ffd97f");
-      this.particles.emitEat(msg.you.x, msg.you.y, myColor);
-    } else if (massBefore >= 0 && msg.you.mass - massBefore > 0.5) {
-      snd.playPellet(0.6);
-    }
-    if (hpBefore >= 0 && msg.you.hp < hpBefore - 1) {
-      snd.playHit(0.7);
-      this.hitFlashUntil = recvTime + 140;
-    }
-    if (boostReadyBefore > 0 && msg.you.boostReadyAt - boostReadyBefore > 5000) {
-      // new boost just started (cooldown jumped by ≥5s)
-      snd.playBoost();
-      this.boostFxUntil = recvTime + 1500;
-    }
-    this.prevYouMass = msg.you.mass;
-    this.prevYouHp = msg.you.hp;
-    this.prevBoostReadyAt = msg.you.boostReadyAt;
-    this.prevSelfX = msg.you.x;
-    this.prevSelfY = msg.you.y;
+    if (msg.you) {
+      // FX: detect changes to self state
+      const massBefore = this.prevYouMass;
+      const hpBefore = this.prevYouHp;
+      const boostReadyBefore = this.prevBoostReadyAt;
+      this.youMass = msg.you.mass;
+      this.youLevel = msg.you.level;
+      this.youXp = msg.you.xp;
+      this.youNextLevelXp = msg.you.nextLevelXp;
+      this.youBoostReadyAt = msg.you.boostReadyAt;
+      this.youWeapons = msg.you.weapons;
+      if (massBefore >= 0 && msg.you.mass - massBefore > 4) {
+        // big mass jump means we ate a fish
+        snd.playEat(msg.you.mass);
+        const myColor = parseColor((window as any).__playerColor ?? "#ffd97f");
+        this.particles.emitEat(msg.you.x, msg.you.y, myColor);
+      } else if (massBefore >= 0 && msg.you.mass - massBefore > 0.5) {
+        snd.playPellet(0.6);
+      }
+      if (hpBefore >= 0 && msg.you.hp < hpBefore - 1) {
+        snd.playHit(0.7);
+        this.hitFlashUntil = recvTime + 140;
+      }
+      if (boostReadyBefore > 0 && msg.you.boostReadyAt - boostReadyBefore > 5000) {
+        // new boost just started (cooldown jumped by ≥5s)
+        snd.playBoost();
+        this.boostFxUntil = recvTime + 1500;
+      }
+      this.prevYouMass = msg.you.mass;
+      this.prevYouHp = msg.you.hp;
+      this.prevBoostReadyAt = msg.you.boostReadyAt;
+      this.prevSelfX = msg.you.x;
+      this.prevSelfY = msg.you.y;
 
-    // self fish — update directly (server sends welcome with selfId before snapshots)
-    if (this.selfId) this.applySelfFish(msg);
+      // self fish — update directly (server sends welcome with selfId before snapshots)
+      if (this.selfId) this.applySelfFish(msg);
+    }
 
     for (const ent of msg.entities) {
       switch (ent.kind) {
@@ -399,16 +419,18 @@ export class ArenaScene {
   }
 
   private handleEntityRemoved(id: number): void {
-    // Shatter FX when a fish entity disappears (eaten or chipped down).
+    // Burst FX when a fish entity disappears (eaten or chipped down).
     const f = this.fishes.get(id);
     if (!f || id === this.selfId) return;
     if (f.mass < 8) return; // tiny fish vanish without spectacle
     const color = parseColor(f.color);
-    this.particles.emitShatter(f.sprite.container.x, f.sprite.container.y, color, f.mass);
+    this.particles.emitChomp(f.sprite.container.x, f.sprite.container.y, color, f.mass);
     if (f.mass > 18) snd.playShatter(0.7);
   }
 
   private applySelfFish(msg: SnapshotMsg): void {
+    const you = msg.you;
+    if (!you) return;
     const key = this.selfId;
     let f = this.fishes.get(key);
     const now = performance.now();
@@ -422,12 +444,12 @@ export class ArenaScene {
         name,
         color,
         isAi: false,
-        prevX: msg.you.x, prevY: msg.you.y, prevTime: now,
-        nextX: msg.you.x, nextY: msg.you.y, nextTime: now,
+        prevX: you.x, prevY: you.y, prevTime: now,
+        nextX: you.x, nextY: you.y, nextTime: now,
         vx: 0, vy: 0,
-        mass: msg.you.mass,
-        hp: msg.you.hp,
-        maxHp: msg.you.maxHp,
+        mass: you.mass,
+        hp: you.hp,
+        maxHp: you.maxHp,
         sprite,
       };
       this.fishes.set(key, f);
@@ -435,15 +457,18 @@ export class ArenaScene {
     f.prevX = f.nextX;
     f.prevY = f.nextY;
     f.prevTime = f.nextTime;
-    f.nextX = msg.you.x;
-    f.nextY = msg.you.y;
+    f.nextX = you.x;
+    f.nextY = you.y;
     f.nextTime = now + INTERP_DELAY_MS;
-    f.mass = msg.you.mass;
-    f.hp = msg.you.hp;
-    f.maxHp = msg.you.maxHp;
+    f.mass = you.mass;
+    f.hp = you.hp;
+    f.maxHp = you.maxHp;
   }
 
   private applyFishDelta(ent: EntityDelta, recvTime: number): void {
+    if (ent.hx !== undefined && ent.hy !== undefined) {
+      this.fishHeading.set(ent.id, { hx: ent.hx, hy: ent.hy });
+    }
     if (ent.id === this.selfId) return; // handled by applySelfFish
     let f = this.fishes.get(ent.id);
     const now = recvTime;
@@ -571,6 +596,9 @@ export class ArenaScene {
     if (f) {
       f.sprite.destroy();
       this.fishes.delete(id);
+      this.fishHeading.delete(id);
+      const m = this.mouthIndicators.get(id);
+      if (m) { m.destroy(); this.mouthIndicators.delete(id); }
       return;
     }
     const p = this.pellets.get(id);
@@ -636,24 +664,30 @@ export class ArenaScene {
     projSpan.end();
 
     // camera
-    const self = this.selfId ? this.fishes.get(this.selfId) : undefined;
     const screenW = this.app.renderer.width;
     const screenH = this.app.renderer.height;
-    if (self) {
-      const ease = 1 - Math.pow(0.001, dt);
-      this.userZoomCurrent += (this.userZoomTarget - this.userZoomCurrent) * ease;
+    if (this.mode === "play") {
+      const self = this.selfId ? this.fishes.get(this.selfId) : undefined;
+      if (self) {
+        const ease = 1 - Math.pow(0.001, dt);
+        this.userZoomCurrent += (this.userZoomTarget - this.userZoomCurrent) * ease;
 
-      const autoZoom = 1 / (1 + Math.log10(Math.max(1, self.mass / 10)));
-      let zoom = autoZoom * this.userZoomCurrent;
+        const autoZoom = 1 / (1 + Math.log10(Math.max(1, self.mass / 10)));
+        let zoom = autoZoom * this.userZoomCurrent;
 
-      const halfDiag = Math.hypot(screenW, screenH) / 2;
-      const zoomMin = halfDiag / viewRadius(self.mass);
-      if (zoom < zoomMin) zoom = zoomMin;
+        const halfDiag = Math.hypot(screenW, screenH) / 2;
+        const zoomMin = halfDiag / viewRadius(self.mass);
+        if (zoom < zoomMin) zoom = zoomMin;
 
-      this.world.scale.set(zoom);
-      this.world.x = screenW / 2 - self.sprite.container.x * zoom;
-      this.world.y = screenH / 2 - self.sprite.container.y * zoom;
+        this.world.scale.set(zoom);
+        this.world.x = screenW / 2 - self.sprite.container.x * zoom;
+        this.world.y = screenH / 2 - self.sprite.container.y * zoom;
+      }
+    } else {
+      this.updateSpectatorCamera(dt, screenW, screenH);
     }
+
+    this.updateMouthIndicators();
 
     const bgSpan = perf.begin("background");
     this.animateBackground(now);
@@ -744,6 +778,246 @@ export class ArenaScene {
     this.hud.players.textContent = players.toString();
   }
 
+  /** Called when our fish dies. Switches to free-pan spectator with WASD pan + Space cycle. */
+  enterSpectatorMode(): void {
+    if (this.mode === "spectate") return;
+    this.mode = "spectate";
+    if (this.selfId) {
+      this.fishHeading.delete(this.selfId);
+      // Drop the local sprite for the dead player — server removed the fish, no need to keep it.
+      const me = this.fishes.get(this.selfId);
+      if (me) { me.sprite.destroy(); this.fishes.delete(this.selfId); }
+    }
+    this.selfId = 0;
+    this.spectatorAnchor = null;
+    // Seed camera at the last known self position so the transition isn't jarring.
+    if (this.prevSelfX || this.prevSelfY) {
+      this.spectatorCam.x = this.prevSelfX;
+      this.spectatorCam.y = this.prevSelfY;
+    }
+    this.startSpectatorHeartbeat();
+    // Pause regular input so movement keys don't leak to the dead fish.
+    if (this.inputInterval !== null) {
+      clearInterval(this.inputInterval);
+      this.inputInterval = null;
+    }
+    // HUD elements for play mode are not useful while dead.
+    this.hud.root.style.display = "none";
+  }
+
+  /** Called on respawn. Restores play mode (selfId set later via welcome). */
+  exitSpectatorMode(): void {
+    if (this.mode === "play") return;
+    this.mode = "play";
+    this.unmountSpectatorHud();
+    this.unbindSpectatorKeys();
+    this.stopSpectatorHeartbeat();
+    this.prevYouMass = -1;
+    this.prevYouHp = -1;
+    this.prevBoostReadyAt = 0;
+    this.hud.root.style.display = "";
+    if (this.inputInterval === null) this.startInputLoop();
+  }
+
+  /** Mount the spectator overlay (DIVE AGAIN button + WASD/Space controls). */
+  showSpectatorHud(): void {
+    if (this.mode !== "spectate") return;
+    this.mountSpectatorHud();
+    this.bindSpectatorKeys();
+  }
+
+  /** Hide the spectator overlay (e.g., while the death modal is up). */
+  hideSpectatorHud(): void {
+    this.unmountSpectatorHud();
+    this.unbindSpectatorKeys();
+  }
+
+  /** Register a callback invoked when the user presses DIVE AGAIN from the spectator HUD. */
+  onSpectatorDive(cb: () => void): void {
+    this.spectatorDiveCb = cb;
+  }
+
+  private mountSpectatorHud(): void {
+    if (this.spectatorHud) return;
+    const root = document.createElement("div");
+    root.className = "spectator-hud";
+    root.innerHTML = `
+      <div class="spectator-hint">SPECTATING — WASD pan · Space cycle player</div>
+      <button class="spectator-dive" type="button">DIVE AGAIN</button>
+    `;
+    document.body.appendChild(root);
+    root.querySelector(".spectator-dive")!.addEventListener("click", () => {
+      this.spectatorDiveCb?.();
+    });
+    this.spectatorHud = root;
+  }
+
+  private unmountSpectatorHud(): void {
+    if (this.spectatorHud) {
+      this.spectatorHud.remove();
+      this.spectatorHud = null;
+    }
+  }
+
+  private bindSpectatorKeys(): void {
+    this.onSpectatorKey = (e: KeyboardEvent) => {
+      if (["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) {
+        e.preventDefault();
+      }
+      if (e.repeat) return;
+      if (e.code === "Space") {
+        this.cycleSpectatorAnchor();
+        return;
+      }
+      this.spectatorKeysDown.add(e.code);
+    };
+    this.onSpectatorKeyUp = (e: KeyboardEvent) => {
+      this.spectatorKeysDown.delete(e.code);
+    };
+    window.addEventListener("keydown", this.onSpectatorKey);
+    window.addEventListener("keyup", this.onSpectatorKeyUp);
+  }
+
+  private unbindSpectatorKeys(): void {
+    if (this.onSpectatorKey) window.removeEventListener("keydown", this.onSpectatorKey);
+    if (this.onSpectatorKeyUp) window.removeEventListener("keyup", this.onSpectatorKeyUp);
+    this.onSpectatorKey = null;
+    this.onSpectatorKeyUp = null;
+    this.spectatorKeysDown.clear();
+  }
+
+  private startSpectatorHeartbeat(): void {
+    this.spectatorHeartbeat = window.setInterval(() => {
+      this.net.spectate(this.spectatorCam.x, this.spectatorCam.y);
+    }, 200);
+    // Send one immediately so the server flips us into spectator state.
+    this.net.spectate(this.spectatorCam.x, this.spectatorCam.y);
+  }
+
+  private stopSpectatorHeartbeat(): void {
+    if (this.spectatorHeartbeat !== null) {
+      clearInterval(this.spectatorHeartbeat);
+      this.spectatorHeartbeat = null;
+    }
+  }
+
+  private cycleSpectatorAnchor(): void {
+    const playerIds: number[] = [];
+    for (const f of this.fishes.values()) {
+      if (!f.isAi) playerIds.push(f.id);
+    }
+    playerIds.sort((a, b) => a - b);
+    if (playerIds.length === 0) {
+      this.spectatorAnchor = null;
+      return;
+    }
+    const cur = this.spectatorAnchor;
+    let nextIdx = 0;
+    if (cur !== null) {
+      const idx = playerIds.indexOf(cur);
+      nextIdx = idx === -1 ? 0 : (idx + 1) % playerIds.length;
+    }
+    this.spectatorAnchor = playerIds[nextIdx]!;
+    const anchored = this.fishes.get(this.spectatorAnchor);
+    if (anchored) {
+      this.spectatorCam.x = anchored.sprite.container.x;
+      this.spectatorCam.y = anchored.sprite.container.y;
+    }
+  }
+
+  private updateSpectatorCamera(dt: number, screenW: number, screenH: number): void {
+    const PAN_SPEED = 800; // world units / sec at default zoom
+    const k = this.spectatorKeysDown;
+    let vx = 0, vy = 0;
+    if (k.has("KeyA") || k.has("ArrowLeft"))  vx -= 1;
+    if (k.has("KeyD") || k.has("ArrowRight")) vx += 1;
+    if (k.has("KeyW") || k.has("ArrowUp"))    vy -= 1;
+    if (k.has("KeyS") || k.has("ArrowDown"))  vy += 1;
+    const mag = Math.hypot(vx, vy);
+    if (mag > 0) {
+      // Free-pan disengages the anchor.
+      if (this.spectatorAnchor !== null) this.spectatorAnchor = null;
+      this.spectatorCam.x += (vx / mag) * PAN_SPEED * dt;
+      this.spectatorCam.y += (vy / mag) * PAN_SPEED * dt;
+    } else if (this.spectatorAnchor !== null) {
+      const anchored = this.fishes.get(this.spectatorAnchor);
+      if (anchored) {
+        // Smooth follow.
+        const ease = 1 - Math.pow(0.001, dt);
+        this.spectatorCam.x += (anchored.sprite.container.x - this.spectatorCam.x) * ease;
+        this.spectatorCam.y += (anchored.sprite.container.y - this.spectatorCam.y) * ease;
+      } else {
+        this.spectatorAnchor = null;
+      }
+    }
+    this.spectatorCam.x = Math.max(0, Math.min(ARENA.width, this.spectatorCam.x));
+    this.spectatorCam.y = Math.max(0, Math.min(ARENA.height, this.spectatorCam.y));
+
+    const ease = 1 - Math.pow(0.001, dt);
+    this.userZoomCurrent += (this.userZoomTarget - this.userZoomCurrent) * ease;
+    const zoom = 0.6 * this.userZoomCurrent;
+    this.world.scale.set(zoom);
+    this.world.x = screenW / 2 - this.spectatorCam.x * zoom;
+    this.world.y = screenH / 2 - this.spectatorCam.y * zoom;
+  }
+
+  private updateMouthIndicators(): void {
+    // Draw a faint forward mouth cone on fish above the slowdown threshold.
+    // Helps players read the new "stay out of the front" rule.
+    const SHOW_FROM_MASS = 500;
+    for (const f of this.fishes.values()) {
+      const r = fishRadius(f.mass);
+      if (f.mass < SHOW_FROM_MASS) {
+        const old = this.mouthIndicators.get(f.id);
+        if (old) { old.destroy(); this.mouthIndicators.delete(f.id); }
+        continue;
+      }
+      const heading = this.fishHeading.get(f.id);
+      if (!heading) continue;
+      const hmag = Math.hypot(heading.hx, heading.hy);
+      if (hmag < 0.05) {
+        const old = this.mouthIndicators.get(f.id);
+        if (old) { old.destroy(); this.mouthIndicators.delete(f.id); }
+        continue;
+      }
+      const hx = heading.hx / hmag;
+      const hy = heading.hy / hmag;
+      const bite = r + MOUTH.suctionExtraRadius;
+      let g = this.mouthIndicators.get(f.id);
+      if (!g) {
+        g = new Graphics();
+        this.mouthIndicators.set(f.id, g);
+        // Insert behind fish sprite so it doesn't cover the fish.
+        this.fishLayer.addChildAt(g, 0);
+      }
+      // Triangle cone pointing along heading from fish center.
+      const angle = Math.atan2(hy, hx);
+      const half = Math.acos(MOUTH.coneCos); // half-angle
+      const tipDist = bite * 1.6;
+      const sideAngle = half;
+      const tipX = f.sprite.container.x + Math.cos(angle) * tipDist;
+      const tipY = f.sprite.container.y + Math.sin(angle) * tipDist;
+      const leftX = f.sprite.container.x + Math.cos(angle - sideAngle) * r * 1.2;
+      const leftY = f.sprite.container.y + Math.sin(angle - sideAngle) * r * 1.2;
+      const rightX = f.sprite.container.x + Math.cos(angle + sideAngle) * r * 1.2;
+      const rightY = f.sprite.container.y + Math.sin(angle + sideAngle) * r * 1.2;
+      g.clear()
+        .moveTo(f.sprite.container.x, f.sprite.container.y)
+        .lineTo(leftX, leftY)
+        .lineTo(tipX, tipY)
+        .lineTo(rightX, rightY)
+        .closePath()
+        .fill({ color: 0xff5566, alpha: 0.12 });
+    }
+    // Clean up indicators for fish that no longer exist
+    for (const [id, g] of this.mouthIndicators) {
+      if (!this.fishes.has(id)) {
+        g.destroy();
+        this.mouthIndicators.delete(id);
+      }
+    }
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.tearDownLevelUp();
@@ -757,16 +1031,22 @@ export class ArenaScene {
       this.app.canvas.removeEventListener("wheel", this.onWheel);
       this.onWheel = null;
     }
+    this.unbindSpectatorKeys();
+    this.unmountSpectatorHud();
+    this.stopSpectatorHeartbeat();
     this.input.teardown();
     for (const f of this.fishes.values()) f.sprite.destroy();
     for (const p of this.pellets.values()) p.gfx.destroy();
     for (const c of this.chunks.values()) c.gfx.destroy();
     for (const pr of this.projectiles.values()) pr.sprite.destroy();
+    for (const g of this.mouthIndicators.values()) g.destroy();
     this.particles.destroy();
     this.fishes.clear();
     this.pellets.clear();
     this.chunks.clear();
     this.projectiles.clear();
+    this.mouthIndicators.clear();
+    this.fishHeading.clear();
     this.world.destroy({ children: true });
     this.hud.root.remove();
     this.toastHud.teardown();

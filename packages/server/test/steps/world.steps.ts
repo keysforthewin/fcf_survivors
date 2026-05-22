@@ -391,6 +391,41 @@ Given("baseline position of {string}", function (this: TestWorld, name: string) 
   this.data.set(`${name}.startY`, f.y);
 });
 
+Given(
+  "{string} has heading \\({float}, {float}\\)",
+  function (this: TestWorld, name: string, hx: number, hy: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    f.headingX = hx;
+    f.headingY = hy;
+  }
+);
+
+Then(
+  "{string} has speed at most {float}",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing`);
+    const s = Math.hypot(f.vx, f.vy);
+    assert.ok(s <= expected, `Expected speed≤${expected}, got ${s.toFixed(2)}`);
+  }
+);
+
+Then("{string} is boosting", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing`);
+  assert.ok(f.boost, `Expected ${name} boosting, but boost=false`);
+});
+
+Then("{string} is not boosting", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing`);
+  assert.ok(!f.boost, `Expected ${name} not boosting, but boost=true`);
+});
+
 Then(
   "the speed of {string} is approximately {float}",
   function (this: TestWorld, name: string, expected: number) {

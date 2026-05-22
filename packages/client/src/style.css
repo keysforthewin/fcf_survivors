@@ -44,6 +44,64 @@ canvas {
   z-index: 10;
 }
 
+/* Translucent variant keeps the arena visible behind the death card. */
+.death-overlay-translucent {
+  background: radial-gradient(ellipse at center, rgba(10,34,54,0.35) 0%, rgba(6,18,28,0.55) 100%);
+  backdrop-filter: blur(2px);
+}
+
+.death-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.death-actions .play { flex: 1; }
+.death-actions .play.secondary {
+  background: rgba(127,207,255,0.18);
+  color: var(--text);
+  border: 1px solid rgba(127,207,255,0.35);
+}
+.death-actions .play.secondary:hover {
+  background: rgba(127,207,255,0.28);
+}
+
+/* Spectator HUD — small bottom bar with controls hint + DIVE AGAIN button. */
+.spectator-hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  align-items: center;
+  z-index: 8;
+  pointer-events: none;
+}
+.spectator-hud .spectator-hint {
+  pointer-events: auto;
+  background: rgba(8,22,34,0.7);
+  border: 1px solid rgba(127,207,255,0.25);
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+.spectator-hud .spectator-dive {
+  pointer-events: auto;
+  background: linear-gradient(180deg, #ffd166, #ff8a4d);
+  color: #1a0c00;
+  font-weight: 700;
+  border: none;
+  padding: 0.6rem 1.4rem;
+  border-radius: 999px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  box-shadow: 0 10px 24px rgba(255,138,77,0.35);
+}
+.spectator-hud .spectator-dive:hover { transform: translateY(-1px); }
+
 .title-card,
 .death-card {
   width: min(420px, 90vw);
@@ -372,11 +430,14 @@ button.play:active { transform: translateY(0); }
   flex-direction: column;
 }
 
-.levelup-card:hover {
+.levelup-card:hover,
+.levelup-card.is-selected {
   transform: translateY(-3px);
   border-color: var(--card-accent);
   box-shadow: 0 12px 30px rgba(0,0,0,0.4), 0 0 0 1px var(--card-accent);
 }
+
+.levelup-card:focus { outline: none; }
 
 .levelup-card:active { transform: translateY(0); }
 
@@ -657,8 +718,11 @@ button.play:active { transform: translateY(0); }
   .help { font-size: 0.7rem; }
   /* Bigger HUD readable on small screens */
   .hud { font-size: 0.95rem; }
-  .hud-weapons { bottom: 220px; }
-  .xp-bar { bottom: 200px; }
+  /* Weapons and XP bar live at the very bottom, below the touch controls */
+  .xp-bar { bottom: 8px; }
+  .hud-weapons { bottom: 22px; }
+  .touch-stick { bottom: 100px; }
+  .touch-boost { bottom: 110px; }
 }
 
 .hidden { display: none !important; }

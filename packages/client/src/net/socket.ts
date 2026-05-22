@@ -71,7 +71,15 @@ export class NetSocket {
   onClose(fn: () => void): void { this.closeHandlers.push(fn); }
   onOpen(fn: () => void): void { this.openHandlers.push(fn); }
 
-  send(obj: HelloMsg | InputMsg | { t: "pickCard"; cardId: string } | { t: "identity"; name?: string; color?: string }): void {
+  send(
+    obj:
+      | HelloMsg
+      | InputMsg
+      | { t: "pickCard"; cardId: string }
+      | { t: "identity"; name?: string; color?: string }
+      | { t: "spectate"; camX: number; camY: number }
+      | { t: "respawn"; name?: string; color?: string }
+  ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(obj));
   }
@@ -87,5 +95,17 @@ export class NetSocket {
   input(vx: number, vy: number, boost: boolean): void {
     this.seq++;
     this.send({ t: "input", seq: this.seq, vx, vy, boost });
+  }
+
+  spectate(camX: number, camY: number): void {
+    this.send({ t: "spectate", camX, camY });
+  }
+
+  respawn(name?: string, color?: string): void {
+    this.send({ t: "respawn", name, color });
+  }
+
+  isOpen(): boolean {
+    return !!this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 }

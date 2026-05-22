@@ -1,4 +1,4 @@
-import { FISH, PASSIVES, fishHp, stackedMult } from "@fcf/shared";
+import { FISH, PASSIVES, fishHp, massSpeedMult, stackedMult } from "@fcf/shared";
 import type { PassiveId } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 
@@ -11,7 +11,7 @@ function effectMult(fish: Fish, id: PassiveId): number {
 }
 
 export function getMoveSpeed(fish: Fish): number {
-  return FISH.baseSpeed * effectMult(fish, "fin");
+  return FISH.baseSpeed * effectMult(fish, "fin") * massSpeedMult(fish.mass);
 }
 
 export function getBoostCooldown(fish: Fish): number {

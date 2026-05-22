@@ -40,9 +40,14 @@ export async function installMockWebSocket(page: Page): Promise<void> {
       __test.emitAll({ t: "welcome", selfId, arena, tickHz });
     };
     __test.snapshot = (payload: Partial<any> = {}): void => {
-      const you = {
+      const now = Date.now();
+      const youOverride = payload.you;
+      const includeYou = youOverride !== null;
+      const you = includeYou ? {
         x: 4000,
         y: 4000,
+        hx: 1,
+        hy: 0,
         mass: 10,
         hp: 20,
         maxHp: 20,
@@ -50,17 +55,34 @@ export async function installMockWebSocket(page: Page): Promise<void> {
         level: 1,
         nextLevelXp: 13,
         boostReadyAt: 0,
-        serverNow: Date.now(),
-        ...(payload.you ?? {}),
-      };
+        boostUntil: 0,
+        serverNow: now,
+        weapons: [],
+        ...(youOverride ?? {}),
+      } : undefined;
       const base = {
         t: "snapshot",
         tick: 1,
         ackSeq: 0,
+        serverNow: now,
         entities: [],
         removed: [],
         ...payload,
-        you,
+      };
+      if (you !== undefined) base.you = you;
+      __test.emitAll(base);
+    };
+    __test.spectatorSnapshot = (payload: Partial<any> = {}): void => {
+      const now = Date.now();
+      const base = {
+        t: "snapshot",
+        tick: 1,
+        ackSeq: 0,
+        serverNow: now,
+        spectator: true,
+        entities: [],
+        removed: [],
+        ...payload,
       };
       __test.emitAll(base);
     };

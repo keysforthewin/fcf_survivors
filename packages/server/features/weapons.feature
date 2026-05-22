@@ -16,7 +16,7 @@ Feature: Weapon damage
     And "Minnow" has mass approximately 22
 
   Scenario: A pulse weapon chips a bigger AI fish (chip damage preserved)
-    Given a player "Apex" at (4000, 4000) with mass 30
+    Given a player "Apex" at (4000, 4000) with mass 70
     And "Apex" has weapon "pulse" at level 1
     And an AI fish "Chunky" at (4060, 4000) with mass 80
     When the world advances 1 tick

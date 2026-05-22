@@ -2,7 +2,7 @@ import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type Lev
 import { ARENA, TICK } from "@fcf/shared";
 import { World, type WorldDeps } from "./sim/world.ts";
 import { processLevelUps, applyCard } from "./sim/levelup.ts";
-import { ClientView, buildSnapshot } from "./net/snapshot.ts";
+import { ClientView, buildSnapshot, buildSpectatorSnapshot } from "./net/snapshot.ts";
 import { topLeaderboard, writeScore, ensureMongo } from "./db/scores.ts";
 import { createHash } from "node:crypto";
 
@@ -16,6 +16,11 @@ interface SocketData {
   color: string;
   /** Level we've already pushed a LevelUpMsg for, so we don't spam. Reset on pickCard. */
   levelUpSentForLevel: number | null;
+  /** True while the socket has no fish but is still receiving world snapshots. */
+  isSpectator: boolean;
+  /** Last reported camera center for spectators (informational; full world is sent). */
+  camX: number;
+  camY: number;
 }
 
 export interface StartServerOpts {
@@ -126,6 +131,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       fishId: number;
       name: string;
       color: string;
+      x: number;
+      y: number;
       mass: number;
       level: number;
       kills: number;
@@ -160,6 +167,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           fishId: f.id,
           name: f.name,
           color: f.color,
+          x: f.x,
+          y: f.y,
           mass: f.mass,
           level: f.level,
           kills: f.kills,
@@ -211,6 +220,12 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         evolution: dp.evolution,
       } satisfies EatenMsg);
       ws.data.fishId = null;
+      ws.data.isSpectator = true;
+      ws.data.camX = dp.x;
+      ws.data.camY = dp.y;
+      // Reset the view cache so the spectator's whole-world snapshot rebuilds cleanly
+      // (previous interest-filtered cache would otherwise leave stale entities outside the old view).
+      ws.data.view = new ClientView();
       writeScore({
         name: dp.name,
         color: dp.color,
@@ -255,11 +270,15 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // send snapshots
     for (const ws of sockets.values()) {
       const fid = ws.data.fishId;
-      if (fid === null) continue;
-      const fish = world.fish.get(fid);
-      if (!fish) continue;
-      const snap = buildSnapshot(world, fish, ws.data.view, wallNow);
-      send(ws, snap);
+      if (fid !== null) {
+        const fish = world.fish.get(fid);
+        if (!fish) continue;
+        const snap = buildSnapshot(world, fish, ws.data.view, wallNow);
+        send(ws, snap);
+      } else if (ws.data.isSpectator) {
+        const snap = buildSpectatorSnapshot(world, ws.data.view, wallNow);
+        send(ws, snap);
+      }
     }
 
     // periodic roster broadcast (~2Hz) as a backup for mass/level updates.
@@ -279,7 +298,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         const id = `s${++socketCounter}`;
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? srv.requestIP(req)?.address ?? "unknown";
         const ok = srv.upgrade(req, {
-          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentForLevel: null },
+          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentForLevel: null, isSpectator: false, camX: ARENA.width / 2, camY: ARENA.height / 2 },
         });
         if (ok) return undefined;
         return new Response("Upgrade failed", { status: 500 });
@@ -355,6 +374,42 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (ok) {
             ws.data.levelUpSentForLevel = null;
           }
+        } else if (msg.t === "spectate") {
+          // Spectator camera heartbeat. Allowed only when the socket has no live fish.
+          if (ws.data.fishId !== null) {
+            const f = world.fish.get(ws.data.fishId);
+            if (f && f.alive) return;
+          }
+          if (!ws.data.isSpectator) {
+            ws.data.isSpectator = true;
+            ws.data.view = new ClientView();
+          }
+          ws.data.camX = msg.camX;
+          ws.data.camY = msg.camY;
+        } else if (msg.t === "respawn") {
+          // Reuse the socket: spin up a fresh fish without dropping the connection.
+          if (ws.data.fishId !== null) {
+            const f = world.fish.get(ws.data.fishId);
+            if (f && f.alive) return;
+          }
+          const name = sanitizeName(msg.name ?? ws.data.name ?? "Fish");
+          const color = sanitizeColor(msg.color ?? ws.data.color ?? "#7fcfff");
+          const fish = world.spawnPlayer(name, color, ws.data.id);
+          ws.data.fishId = fish.id;
+          ws.data.startedAt = now;
+          ws.data.name = name;
+          ws.data.color = color;
+          ws.data.isSpectator = false;
+          ws.data.levelUpSentForLevel = null;
+          ws.data.view = new ClientView();
+          send(ws, {
+            t: "welcome",
+            selfId: fish.id,
+            arena: { width: ARENA.width, height: ARENA.height },
+            tickHz: TICK.hz,
+          });
+          broadcast({ t: "playerJoined", name, color } satisfies PlayerJoinedMsg, ws);
+          broadcastRoster();
         } else if (msg.t === "identity") {
           const fid = ws.data.fishId;
           if (fid === null) return;

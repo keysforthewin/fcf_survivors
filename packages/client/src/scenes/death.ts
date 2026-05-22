@@ -10,10 +10,15 @@ const SORT_LABEL: Record<SortKey, string> = {
   kills: "MOST KILLS",
 };
 
-export function showDeath(eaten: EatenMsg, initialLeaderboard: LeaderboardEntry[]): Promise<void> {
+export type DeathChoice = "dive" | "spectate";
+
+export function showDeath(
+  eaten: EatenMsg,
+  initialLeaderboard: LeaderboardEntry[]
+): Promise<DeathChoice> {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
-    overlay.className = "death-overlay";
+    overlay.className = "death-overlay death-overlay-translucent";
     overlay.innerHTML = `
       <div class="death-card">
         <button class="hud-gear death-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
@@ -34,7 +39,10 @@ export function showDeath(eaten: EatenMsg, initialLeaderboard: LeaderboardEntry[
           </div>
           <div class="leaderboard-list" data-leaderboard-list></div>
         </div>
-        <button class="play" type="button">DIVE AGAIN</button>
+        <div class="death-actions">
+          <button class="play secondary" type="button" data-spectate>SPECTATE</button>
+          <button class="play" type="button" data-dive>DIVE AGAIN</button>
+        </div>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -62,9 +70,14 @@ export function showDeath(eaten: EatenMsg, initialLeaderboard: LeaderboardEntry[
       });
     }
 
-    overlay.querySelector(".play")!.addEventListener("click", () => {
+    overlay.querySelector("[data-dive]")!.addEventListener("click", () => {
       overlay.remove();
-      resolve();
+      resolve("dive");
+    });
+
+    overlay.querySelector("[data-spectate]")!.addEventListener("click", () => {
+      overlay.remove();
+      resolve("spectate");
     });
 
     overlay.querySelector("[data-gear]")!.addEventListener("click", () => {

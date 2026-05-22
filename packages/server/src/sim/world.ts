@@ -1,4 +1,4 @@
-import { ARENA, FISH, PELLET, TICK, canEat, fishHp, fishRadius } from "@fcf/shared";
+import { ARENA, FISH, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishHp, fishRadius } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
 import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
@@ -202,7 +202,7 @@ export class World {
     fish.targetVy = vy;
     if (boost && now >= fish.boostReadyAt) {
       fish.boost = true;
-      fish.boostUntil = now + FISH.boostDurationMs;
+      fish.boostUntil = now + boostDurationMs(fish.mass);
       fish.boostReadyAt = now + getBoostCooldown(fish);
     }
   }
@@ -333,33 +333,70 @@ export class World {
 
     // (level-ups are applied by processLevelUps; see sim/levelup.ts)
 
-    // collisions: fish eat smaller fish
+    // collisions: fish eat smaller fish.
+    // Predators only eat prey within a front mouth cone (heading-aligned).
+    // Prey outside the cone can swim alongside / behind without being chomped —
+    // this is the "smaller fish nibbles the giant" loop. Stationary fish have
+    // no defined cone, so they get a 360° fallback (still get eaten if overlapped).
     const fishList = [...this.fish.values()];
     for (const a of fishList) {
       if (!a.alive) continue;
       const rA = fishRadius(a.mass);
+      const reach = rA + MOUTH.suctionExtraRadius + 80;
       scratch.length = 0;
-      this.fishHash.query(a.x, a.y, rA + 80, scratch);
+      this.fishHash.query(a.x, a.y, reach, scratch);
+      const headingMag = Math.hypot(a.headingX, a.headingY);
+      const stationary = headingMag < MOUTH.stationaryHeadingEps;
+      const hx = stationary ? 0 : a.headingX / headingMag;
+      const hy = stationary ? 0 : a.headingY / headingMag;
       for (const b of scratch as Fish[]) {
         if (b.id === a.id || !b.alive) continue;
         if (!canEat(a.mass, b.mass)) continue;
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const dist2 = dx * dx + dy * dy;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy);
         const rB = fishRadius(b.mass);
-        // require overlap of at least 50% of prey radius
-        const threshold = rA - rB * 0.5;
-        if (dist2 <= threshold * threshold) {
-          // a eats b
-          const baseGain = b.mass * (1 - FISH.massTaxOnEat);
-          a.mass += a.isAi ? baseGain : getFishEatMass(baseGain, a);
-          a.maxHp = a.isAi ? fishHp(a.mass) : getMaxHp(a);
-          a.hp = Math.min(a.maxHp, a.hp + b.mass * 0.5);
-          a.kills += 1;
-          a.xp += Math.max(5, Math.floor(b.mass * 1.5));
-          b.alive = false;
-          // mark b for removal at end of tick (handled by caller)
+
+        // Direction gate: if predator is moving, require prey roughly in front.
+        if (!stationary && dist > 0.001) {
+          const dot = (hx * dx + hy * dy) / dist;
+          if (dot < MOUTH.coneCos) continue;
         }
+
+        // Mouth point sits half a suction buffer in front of the predator.
+        // Effective bite radius extends rA + suctionExtraRadius from that point.
+        // No suction from outside the bite zone — small fish must actually enter
+        // the danger area before the giant can vacuum them up.
+        const mx = stationary ? a.x : a.x + hx * (rA + MOUTH.suctionExtraRadius * 0.5);
+        const my = stationary ? a.y : a.y + hy * (rA + MOUTH.suctionExtraRadius * 0.5);
+        const mdx = b.x - mx;
+        const mdy = b.y - my;
+        const mouthDist2 = mdx * mdx + mdy * mdy;
+        const bite = rA + MOUTH.suctionExtraRadius;
+        if (mouthDist2 > bite * bite) continue;
+
+        // Within mouth — confirm prey has actually penetrated past 50% rB into
+        // the bite zone, OR is already overlapping the body (close-range chomp).
+        const overlapByBody = dist < rA - rB * 0.5;
+        const overlapByMouth = mouthDist2 < (bite - rB * 0.5) * (bite - rB * 0.5);
+        if (!overlapByBody && !overlapByMouth) {
+          // Pull prey toward mouth this tick; bite resolves next tick.
+          const pullX = (mx - b.x) * MOUTH.suctionPullPerTick;
+          const pullY = (my - b.y) * MOUTH.suctionPullPerTick;
+          b.x += pullX;
+          b.y += pullY;
+          continue;
+        }
+
+        // a eats b
+        const baseGain = b.mass * (1 - FISH.massTaxOnEat);
+        a.mass += a.isAi ? baseGain : getFishEatMass(baseGain, a);
+        a.maxHp = a.isAi ? fishHp(a.mass) : getMaxHp(a);
+        a.hp = Math.min(a.maxHp, a.hp + b.mass * 0.5);
+        a.kills += 1;
+        a.xp += Math.max(5, Math.floor(b.mass * 1.5));
+        b.alive = false;
+        // mark b for removal at end of tick (handled by caller)
       }
     }
   }

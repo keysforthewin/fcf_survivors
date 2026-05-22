@@ -29,7 +29,28 @@ export const IdentityMsg = z.object({
 });
 export type IdentityMsg = z.infer<typeof IdentityMsg>;
 
-export const ClientMsg = z.discriminatedUnion("t", [HelloMsg, InputMsg, PickCardMsg, IdentityMsg]);
+export const SpectateMsg = z.object({
+  t: z.literal("spectate"),
+  camX: z.number(),
+  camY: z.number(),
+});
+export type SpectateMsg = z.infer<typeof SpectateMsg>;
+
+export const RespawnMsg = z.object({
+  t: z.literal("respawn"),
+  name: z.string().min(1).max(16).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+});
+export type RespawnMsg = z.infer<typeof RespawnMsg>;
+
+export const ClientMsg = z.discriminatedUnion("t", [
+  HelloMsg,
+  InputMsg,
+  PickCardMsg,
+  IdentityMsg,
+  SpectateMsg,
+  RespawnMsg,
+]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
 export interface WelcomeMsg {
@@ -46,6 +67,8 @@ export interface EntityDelta {
   y: number;
   vx?: number;
   vy?: number;
+  hx?: number;
+  hy?: number;
   mass?: number;
   hp?: number;
   maxHp?: number;
@@ -67,9 +90,12 @@ export interface SnapshotMsg {
   t: "snapshot";
   tick: number;
   ackSeq: number;
-  you: {
+  /** Present when the receiving socket has a live fish. Absent for spectator sockets. */
+  you?: {
     x: number;
     y: number;
+    hx: number;
+    hy: number;
     mass: number;
     hp: number;
     maxHp: number;
@@ -77,9 +103,14 @@ export interface SnapshotMsg {
     level: number;
     nextLevelXp: number;
     boostReadyAt: number;
+    boostUntil: number;
     serverNow: number;
     weapons: YouWeaponSlot[];
   };
+  /** Server's current time, always sent (matches you.serverNow when present). */
+  serverNow: number;
+  /** True when this snapshot is being delivered to a spectator socket (no local fish). */
+  spectator?: boolean;
   entities: EntityDelta[];
   removed: number[];
 }
