@@ -51,6 +51,10 @@ export const AI = {
   separationRadius: 80,
   /** Blend weight of the unit separation vector added to the steering direction. */
   separationWeight: 0.35,
+  /** Distance from any wall at which the smooth repulsion field starts contributing. */
+  wallRepulseRadius: 400,
+  /** Strength of the repulsion field added to the steering vector (squared falloff with distance). Strong enough at close range to overpower a wander/flee pointing into the wall. */
+  wallRepulseWeight: 2.5,
 } as const;
 
 export const VIEW = {
@@ -75,5 +79,5 @@ export function canEat(predatorMass: number, preyMass: number): boolean {
 }
 
 export function xpForLevel(level: number): number {
-  return Math.floor(10 * Math.pow(1.35, level));
+  return Math.floor(2 * Math.pow(1.1, level));
 }

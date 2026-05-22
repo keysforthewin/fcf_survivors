@@ -167,6 +167,12 @@ export class FishSprite {
     }
   }
 
+  setIdentity(name: string, color: string): void {
+    this.label.text = name;
+    this.color = parseColor(color);
+    this.draw(this.currentRadius, this.currentHpPct);
+  }
+
   destroy(): void {
     this.container.destroy({ children: true });
   }

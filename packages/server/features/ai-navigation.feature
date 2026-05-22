@@ -37,3 +37,36 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
     And an AI fish "Twin2" at (4001, 4000) with mass 20 in "wander" mode
     When the world advances 30 ticks
     Then "Twin1" and "Twin2" are more than 20 units apart
+
+  Scenario: AI wandering toward the left wall is pushed back into the arena
+    Given an AI fish "WallHugger" at (30, 4000) with mass 20 in "wander" mode
+    And "WallHugger" has wander heading 3.14159
+    When the world advances 40 ticks
+    Then "WallHugger" is at least 200 units from the left wall
+
+  Scenario: AI wandering into the top-left corner escapes both walls
+    Given an AI fish "Cornered" at (30, 30) with mass 20 in "wander" mode
+    And "Cornered" has wander heading -2.3562
+    When the world advances 40 ticks
+    Then "Cornered" is at least 150 units from the left wall
+    And "Cornered" is at least 150 units from the top wall
+
+  Scenario: AI wandering into the bottom-right corner escapes both walls
+    Given an AI fish "Trapped" at (7970, 7970) with mass 20 in "wander" mode
+    And "Trapped" has wander heading 0.7854
+    When the world advances 40 ticks
+    Then "Trapped" is at least 150 units from the right wall
+    And "Trapped" is at least 150 units from the bottom wall
+
+  Scenario: AI in open water is not affected by wall repulsion
+    Given an AI fish "Roamer" at (4000, 4000) with mass 20 in "wander" mode
+    And "Roamer" has wander heading 0
+    And baseline position of "Roamer"
+    When the world advances 40 ticks
+    Then "Roamer" has moved at least 200 units
+
+  Scenario: A wandering AI fish stuck against a wall recovers without a target
+    Given an AI fish "NoTarget" at (20, 4000) with mass 20 in "wander" mode
+    And "NoTarget" has wander heading 3.14159
+    When the world advances 100 ticks
+    Then "NoTarget" is at least 300 units from the left wall

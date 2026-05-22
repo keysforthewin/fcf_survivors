@@ -52,6 +52,13 @@ canvas {
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 18px;
   box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+  position: relative;
+}
+
+.death-gear {
+  position: absolute;
+  top: 14px;
+  right: 14px;
 }
 
 .title-card h1 {
@@ -159,6 +166,36 @@ button.play:active { transform: translateY(0); }
   border-radius: 10px;
   backdrop-filter: blur(4px);
   border: 1px solid rgba(255,255,255,0.06);
+}
+
+.hud-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hud-gear {
+  pointer-events: auto;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.14);
+  color: var(--muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease, transform 0.15s ease;
+}
+
+.hud-gear:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255,217,127,0.08);
+  transform: rotate(45deg);
 }
 
 .hud-stat {
@@ -731,3 +768,73 @@ button.play:active { transform: translateY(0); }
 .roster-row.is-me .roster-mass {
   color: var(--accent-2);
 }
+
+/* === Identity editor modal === */
+.identity-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(6,18,28,0.55);
+  backdrop-filter: blur(4px);
+  animation: identity-fade-in 0.12s ease-out both;
+}
+
+@keyframes identity-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.identity-card {
+  width: min(360px, 90vw);
+  padding: 1.6rem 1.4rem 1.4rem;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+}
+
+.identity-card h2 {
+  margin: 0 0 1.1rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.identity-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+}
+
+.identity-actions button {
+  font: inherit;
+  padding: 0.55rem 1rem;
+  border-radius: 9px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 0.08s ease, filter 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+}
+
+.identity-cancel {
+  background: transparent;
+  color: var(--muted);
+  border-color: rgba(255,255,255,0.12);
+}
+
+.identity-cancel:hover {
+  color: var(--text);
+  border-color: rgba(255,255,255,0.25);
+}
+
+.identity-save {
+  background: var(--accent);
+  color: #1a1207;
+  font-weight: 600;
+}
+
+.identity-save:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.identity-save:active { transform: translateY(0); }

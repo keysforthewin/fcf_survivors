@@ -9,6 +9,8 @@ import { ParticleSystem } from "../render/particles.ts";
 import { mountLevelUp, type LevelUpMount } from "./level-up.ts";
 import { mountToastHud, type ToastHud } from "../hud/toast.ts";
 import { mountRosterHud, type RosterHud } from "../hud/roster.ts";
+import { mountIdentityEditor, type IdentityEditorMount } from "../hud/identity-editor.ts";
+import { saveIdentity } from "../identity.ts";
 import * as snd from "../sound.ts";
 
 interface FishState {
@@ -117,6 +119,7 @@ export class ArenaScene {
   private userZoomCurrent = 1;
   private onWheel: ((e: WheelEvent) => void) | null = null;
   private levelUpMount: LevelUpMount | null = null;
+  private identityEditorMount: IdentityEditorMount | null = null;
   private particles = new ParticleSystem();
   // FX state tracking
   private prevYouMass = -1;
@@ -161,6 +164,30 @@ export class ArenaScene {
       this.userZoomTarget = Math.max(USER_ZOOM_MIN, Math.min(USER_ZOOM_MAX, this.userZoomTarget * factor));
     };
     this.app.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+
+    this.hud.gear.addEventListener("click", () => this.openIdentityEditor());
+  }
+
+  private openIdentityEditor(): void {
+    if (this.identityEditorMount) return;
+    const currentName = (window as any).__playerName ?? "Fish";
+    const currentColor = (window as any).__playerColor ?? "#ffd97f";
+    this.identityEditorMount = mountIdentityEditor({
+      current: { name: currentName, color: currentColor },
+      onSave: (next) => {
+        (window as any).__playerName = next.name;
+        (window as any).__playerColor = next.color;
+        saveIdentity(next);
+        this.net.identity(next.name, next.color);
+        const me = this.selfId ? this.fishes.get(this.selfId) : undefined;
+        if (me) {
+          me.name = next.name;
+          me.color = next.color;
+          me.sprite.setIdentity(next.name, next.color);
+        }
+      },
+      onClose: () => { this.identityEditorMount = null; },
+    });
   }
 
   private bindNetwork(): void {
@@ -429,6 +456,12 @@ export class ArenaScene {
     if (ent.mass !== undefined) f.mass = ent.mass;
     if (ent.hp !== undefined) f.hp = ent.hp;
     if (ent.maxHp !== undefined) f.maxHp = ent.maxHp;
+    // The server re-sends name/color (treated as "first-seen" from its snapshot view)
+    // when another player edits their identity. Reflect that into the sprite.
+    let identityChanged = false;
+    if (ent.name !== undefined && ent.name !== f.name) { f.name = ent.name; identityChanged = true; }
+    if (ent.color !== undefined && ent.color !== f.color) { f.color = ent.color; identityChanged = true; }
+    if (identityChanged) f.sprite.setIdentity(f.name, f.color);
   }
 
   private applyPelletDelta(ent: EntityDelta): void {
@@ -662,6 +695,10 @@ export class ArenaScene {
   destroy(): void {
     this.destroyed = true;
     this.tearDownLevelUp();
+    if (this.identityEditorMount) {
+      this.identityEditorMount.teardown();
+      this.identityEditorMount = null;
+    }
     if (this.inputInterval !== null) clearInterval(this.inputInterval);
     this.app.ticker.remove(this.tick);
     if (this.onWheel) {
@@ -700,6 +737,7 @@ interface HudElements {
   xpFill: HTMLElement;
   boost: HTMLElement;
   weaponSlots: WeaponSlotEl[];
+  gear: HTMLElement;
 }
 
 function mountHud(): HudElements {
@@ -716,6 +754,7 @@ function mountHud(): HudElements {
         <div class="hud-stat">
           <div><div class="label">Players</div><div class="value" data-players>1</div></div>
         </div>
+        <button class="hud-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
       </div>
     </div>
     <div class="hud-weapons" data-weapons>
@@ -745,6 +784,7 @@ function mountHud(): HudElements {
     xpFill: root.querySelector("[data-xp]") as HTMLElement,
     boost: root.querySelector("[data-boost]") as HTMLElement,
     weaponSlots: slots,
+    gear: root.querySelector("[data-gear]") as HTMLElement,
   };
 }
 

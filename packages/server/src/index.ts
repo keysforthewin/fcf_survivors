@@ -355,6 +355,29 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (ok) {
             ws.data.levelUpSentForLevel = null;
           }
+        } else if (msg.t === "identity") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          let changed = false;
+          if (msg.name !== undefined) {
+            const name = sanitizeName(msg.name);
+            if (name !== fish.name) { fish.name = name; ws.data.name = name; changed = true; }
+          }
+          if (msg.color !== undefined) {
+            const color = sanitizeColor(msg.color);
+            if (color !== fish.color) { fish.color = color; ws.data.color = color; changed = true; }
+          }
+          if (changed) {
+            // Force other clients' snapshot views to re-send name/color for this fish
+            // (buildSnapshot only emits those fields on first-seen).
+            for (const other of sockets.values()) {
+              if (other === ws) continue;
+              other.data.view.prevSent.delete(fish.id);
+            }
+            broadcastRoster();
+          }
         }
       },
       close(ws) {

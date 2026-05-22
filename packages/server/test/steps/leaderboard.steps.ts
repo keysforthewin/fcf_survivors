@@ -1,7 +1,7 @@
-import { Given, Then } from "@cucumber/cucumber";
+import { Given, Then, When } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
 import { TestWorld } from "../support/world.ts";
-import type { LeaderboardRow } from "../../src/db/scores.ts";
+import { writeScore, type LeaderboardRow, type ScoreDoc } from "../../src/db/scores.ts";
 
 Given(
   "the leaderboard contains:",
@@ -70,5 +70,28 @@ Then(
     const last = server.scores.writes.at(-1);
     assert.ok(last, "no writes recorded");
     assert.equal(last.killedBy, by);
+  }
+);
+
+When(
+  "the leaderboard records a death for {string} with finalMass {float}",
+  async function (this: TestWorld, name: string, mass: number) {
+    this.requireServer();
+    const doc: ScoreDoc = {
+      name,
+      color: "#7fcfff",
+      finalMass: mass,
+      level: 1,
+      kills: 0,
+      durationMs: 1000,
+      killedBy: null,
+      startedAt: new Date(0),
+      endedAt: new Date(),
+      ipHash: "test",
+      weapons: [],
+      passives: [],
+      evolution: null,
+    };
+    await writeScore(doc);
   }
 );

@@ -1,5 +1,6 @@
 import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
+import { ARENA } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import { advanceTicks, tryFish } from "../support/world-factory.ts";
 
@@ -84,5 +85,38 @@ Then(
     assert.ok(b, `${nameB} missing`);
     const d = Math.hypot(a.x - b.x, a.y - b.y);
     assert.ok(d > dist, `Expected ${nameA}↔${nameB} > ${dist}, got ${d.toFixed(2)}`);
+  }
+);
+
+Given(
+  "{string} has wander heading {float}",
+  function (this: TestWorld, name: string, heading: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    assert.ok(f.aiState, `${name} is not an AI fish`);
+    f.aiState.wanderHeading = heading;
+  }
+);
+
+Then(
+  /^"([^"]+)" is at least ([\d.]+) units from the (left|right|top|bottom) wall$/,
+  function (this: TestWorld, name: string, distStr: string, wall: string) {
+    const dist = Number(distStr);
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    let d: number;
+    switch (wall) {
+      case "left":   d = f.x; break;
+      case "right":  d = ARENA.width - f.x; break;
+      case "top":    d = f.y; break;
+      case "bottom": d = ARENA.height - f.y; break;
+      default: throw new Error(`Unknown wall '${wall}' (expected left/right/top/bottom)`);
+    }
+    assert.ok(
+      d >= dist,
+      `Expected ${name} ≥${dist} from ${wall} wall, got ${d.toFixed(2)}`
+    );
   }
 );

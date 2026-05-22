@@ -22,7 +22,14 @@ export const PickCardMsg = z.object({
 });
 export type PickCardMsg = z.infer<typeof PickCardMsg>;
 
-export const ClientMsg = z.discriminatedUnion("t", [HelloMsg, InputMsg, PickCardMsg]);
+export const IdentityMsg = z.object({
+  t: z.literal("identity"),
+  name: z.string().min(1).max(16).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+});
+export type IdentityMsg = z.infer<typeof IdentityMsg>;
+
+export const ClientMsg = z.discriminatedUnion("t", [HelloMsg, InputMsg, PickCardMsg, IdentityMsg]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
 export interface WelcomeMsg {

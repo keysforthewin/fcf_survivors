@@ -1,5 +1,7 @@
 import type { EatenMsg, LeaderboardEntry } from "@fcf/shared";
 import { WEAPONS, PASSIVES } from "@fcf/shared";
+import { loadIdentity, saveIdentity } from "../identity.ts";
+import { mountIdentityEditor } from "../hud/identity-editor.ts";
 
 type SortKey = "mass" | "recent" | "kills";
 const SORT_LABEL: Record<SortKey, string> = {
@@ -14,6 +16,7 @@ export function showDeath(eaten: EatenMsg, initialLeaderboard: LeaderboardEntry[
     overlay.className = "death-overlay";
     overlay.innerHTML = `
       <div class="death-card">
+        <button class="hud-gear death-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
         <h1>You were eaten by ${escapeHtml(eaten.byName)}</h1>
         <p class="subtitle">It tasted like victory. For them.</p>
         <div class="death-stats">
@@ -62,6 +65,20 @@ export function showDeath(eaten: EatenMsg, initialLeaderboard: LeaderboardEntry[
     overlay.querySelector(".play")!.addEventListener("click", () => {
       overlay.remove();
       resolve();
+    });
+
+    overlay.querySelector("[data-gear]")!.addEventListener("click", () => {
+      const stored = loadIdentity();
+      const currentName = (window as any).__playerName ?? stored.name ?? "Fish";
+      const currentColor = (window as any).__playerColor ?? stored.color ?? "#ffd97f";
+      mountIdentityEditor({
+        current: { name: currentName, color: currentColor },
+        onSave: (next) => {
+          (window as any).__playerName = next.name;
+          (window as any).__playerColor = next.color;
+          saveIdentity(next);
+        },
+      });
     });
   });
 }

@@ -92,15 +92,22 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
 
     if (
       state.stuckSince != null &&
-      now - state.stuckSince >= AI.stuckTriggerMs &&
-      state.targetId != null
+      now - state.stuckSince >= AI.stuckTriggerMs
     ) {
-      state.blacklist.set(state.targetId, now + AI.blacklistDurationMs);
+      if (state.targetId != null) {
+        state.blacklist.set(state.targetId, now + AI.blacklistDurationMs);
+      }
       state.targetId = null;
       state.targetSince = now;
       state.mode = "wander";
       state.modeUntil = now + 1500;
-      state.wanderHeading = rng() * Math.PI * 2;
+      // Aim the recovery heading toward the arena center so the fish breaks
+      // free of whatever wall or corner it was hugging.
+      const dxCenter = ARENA.width / 2 - fish.x;
+      const dyCenter = ARENA.height / 2 - fish.y;
+      state.wanderHeading = (dxCenter === 0 && dyCenter === 0)
+        ? rng() * Math.PI * 2
+        : Math.atan2(dyCenter, dxCenter) + (rng() - 0.5) * 0.8;
       state.stuckSince = null;
     }
   }
@@ -114,7 +121,39 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   if (now >= state.modeUntil) {
     state.mode = "wander";
     state.modeUntil = now + 1500 + rng() * 2500;
-    state.wanderHeading += (rng() - 0.5) * 1.2;
+    const repulseR = AI.wallRepulseRadius;
+    const nearWall =
+      fish.x < repulseR || fish.y < repulseR ||
+      ARENA.width - fish.x < repulseR || ARENA.height - fish.y < repulseR;
+    if (nearWall) {
+      // Bias the new heading toward the arena center so we don't immediately
+      // re-aim into the wall we're already next to.
+      const dxCenter = ARENA.width / 2 - fish.x;
+      const dyCenter = ARENA.height / 2 - fish.y;
+      state.wanderHeading = Math.atan2(dyCenter, dxCenter) + (rng() - 0.5) * 1.2;
+    } else {
+      state.wanderHeading += (rng() - 0.5) * 1.2;
+    }
+  }
+
+  // Per-tick safety: if we're wandering near a wall but our heading still
+  // points into it, snap the heading toward the arena center. Prevents
+  // wander-stuck loops where the heading drifts into a wall and the fish
+  // hugs it until the next modeUntil reset (1.5–4s).
+  if (state.mode === "wander") {
+    const repulseR = AI.wallRepulseRadius;
+    const hx = Math.cos(state.wanderHeading);
+    const hy = Math.sin(state.wanderHeading);
+    const intoWall =
+      (fish.x < repulseR && hx < -0.3) ||
+      (fish.x > ARENA.width - repulseR && hx > 0.3) ||
+      (fish.y < repulseR && hy < -0.3) ||
+      (fish.y > ARENA.height - repulseR && hy > 0.3);
+    if (intoWall) {
+      const dxCenter = ARENA.width / 2 - fish.x;
+      const dyCenter = ARENA.height / 2 - fish.y;
+      state.wanderHeading = Math.atan2(dyCenter, dxCenter) + (rng() - 0.5) * 0.6;
+    }
   }
 
   // Validate the current target so hysteresis can compare against it.
@@ -215,12 +254,21 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     state.targetSince = now;
   }
 
-  // bounce off walls
-  const margin = 200;
-  if (fish.x < margin) tvx = Math.max(tvx, 0.3);
-  if (fish.x > ARENA.width - margin) tvx = Math.min(tvx, -0.3);
-  if (fish.y < margin) tvy = Math.max(tvy, 0.3);
-  if (fish.y > ARENA.height - margin) tvy = Math.min(tvy, -0.3);
+  // Smooth wall repulsion field. Contributes 0 when far from any wall and
+  // ramps up with a squared falloff as distance shrinks toward zero. Strong
+  // enough at very close range to overpower a wander/flee pointing into the
+  // wall — fixes the old "AI hugs the wall and crawls" failure mode where the
+  // hard +0.3 clamp left the unit vector tiny.
+  const repulseR = AI.wallRepulseRadius;
+  const repulseW = AI.wallRepulseWeight;
+  const leftD = fish.x;
+  const rightD = ARENA.width - fish.x;
+  const topD = fish.y;
+  const botD = ARENA.height - fish.y;
+  if (leftD < repulseR)  tvx += Math.pow(1 - leftD / repulseR, 2) * repulseW;
+  if (rightD < repulseR) tvx -= Math.pow(1 - rightD / repulseR, 2) * repulseW;
+  if (topD < repulseR)   tvy += Math.pow(1 - topD / repulseR, 2) * repulseW;
+  if (botD < repulseR)   tvy -= Math.pow(1 - botD / repulseR, 2) * repulseW;
 
   // Neighbor separation: blend in a push-away from same-tier fish (peers, not
   // eat/eaten). fishHash reflects last tick's positions (rebuilt at end of step),
@@ -247,12 +295,16 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     if (sepLen > 0) {
       tvx += (sepX / sepLen) * AI.separationWeight;
       tvy += (sepY / sepLen) * AI.separationWeight;
-      const m = Math.hypot(tvx, tvy);
-      if (m > 1) {
-        tvx /= m;
-        tvy /= m;
-      }
     }
+  }
+
+  // Final clamp: the steering target must be a unit vector at most, otherwise
+  // wall repulsion at close range could ramp the desired velocity past the
+  // mode speed and the fish would visibly turbo-boost away from walls.
+  const mag = Math.hypot(tvx, tvy);
+  if (mag > 1) {
+    tvx /= mag;
+    tvy /= mag;
   }
 
   fish.targetVx = tvx;

@@ -3,6 +3,7 @@ import { NetSocket } from "./net/socket.ts";
 import { showTitle } from "./scenes/title.ts";
 import { showDeath } from "./scenes/death.ts";
 import { ArenaScene } from "./scenes/arena.ts";
+import { loadIdentity, saveIdentity } from "./identity.ts";
 import type { LeaderboardEntry } from "@fcf/shared";
 
 async function main() {
@@ -20,10 +21,11 @@ async function main() {
   let lastLeaderboard: LeaderboardEntry[] = [];
 
   // outer game loop: title → arena → death → repeat
-  let prefill: { name?: string; color?: string } = {};
+  let prefill: { name?: string; color?: string } = loadIdentity();
   while (true) {
     const choice = await showTitle(prefill);
     prefill = { name: choice.name, color: choice.color };
+    saveIdentity(prefill);
     (window as any).__playerName = choice.name;
     (window as any).__playerColor = choice.color;
 
@@ -74,6 +76,8 @@ async function main() {
 
     arena.destroy();
     await showDeath(deathMsg, lastLeaderboard);
+    // Pick up any identity edits made on the death screen so the next dive prefills them.
+    prefill = loadIdentity();
   }
 }
 

@@ -17,3 +17,18 @@ Feature: Leaderboard persistence and broadcast
 
   Scenario: An empty leaderboard still arrives as an empty broadcast
     Then client "alice" receives a leaderboard with 0 entries
+
+  Scenario: A player's better second run replaces their first
+    When the leaderboard records a death for "Steve" with finalMass 100
+    And the leaderboard records a death for "steve" with finalMass 250
+    And client "bob" is connected
+    Then the leaderboard mock recorded 2 writes
+    And client "bob" receives a leaderboard with 1 entries
+    And client "bob" receives a leaderboard whose top name is "steve"
+
+  Scenario: A player's worse second run does not appear on the board
+    When the leaderboard records a death for "Mega" with finalMass 500
+    And the leaderboard records a death for "Mega" with finalMass 120
+    And client "bob" is connected
+    Then client "bob" receives a leaderboard with 1 entries
+    And client "bob" receives a leaderboard whose top name is "Mega"

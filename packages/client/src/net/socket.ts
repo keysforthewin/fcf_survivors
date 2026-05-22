@@ -71,13 +71,17 @@ export class NetSocket {
   onClose(fn: () => void): void { this.closeHandlers.push(fn); }
   onOpen(fn: () => void): void { this.openHandlers.push(fn); }
 
-  send(obj: HelloMsg | InputMsg | { t: "pickCard"; cardId: string }): void {
+  send(obj: HelloMsg | InputMsg | { t: "pickCard"; cardId: string } | { t: "identity"; name?: string; color?: string }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(obj));
   }
 
   hello(name: string, color: string): void {
     this.send({ t: "hello", name, color });
+  }
+
+  identity(name?: string, color?: string): void {
+    this.send({ t: "identity", name, color });
   }
 
   input(vx: number, vy: number, boost: boolean): void {

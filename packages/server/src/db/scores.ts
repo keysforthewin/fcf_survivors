@@ -2,6 +2,8 @@ import { MongoClient, type Collection } from "mongodb";
 
 export interface ScoreDoc {
   name: string;
+  /** Lowercased name — the dedup key. Computed by upsertScore; callers don't supply it. */
+  nameKey?: string;
   color: string;
   finalMass: number;
   level: number;
@@ -60,7 +62,7 @@ export async function ensureMongo(): Promise<Collection<ScoreDoc> | null> {
     await coll.createIndex({ finalMass: -1 });
     await coll.createIndex({ endedAt: -1 });
     await coll.createIndex({ kills: -1 });
-    await coll.createIndex({ name: 1, endedAt: -1 });
+    await coll.createIndex({ nameKey: 1 }, { unique: true });
     await coll.createIndex({ "weapons.id": 1 });
     client = c;
     scoresColl = coll;
@@ -74,17 +76,45 @@ export async function ensureMongo(): Promise<Collection<ScoreDoc> | null> {
   }
 }
 
+/**
+ * Upsert a single score doc keyed by nameKey, keeping the highest finalMass.
+ * Two-step: first try to replace an existing-but-worse doc atomically, then
+ * fall back to insert-if-missing. The unique index on nameKey makes this safe
+ * under concurrent writes for the same name.
+ */
+async function upsertScore(coll: Collection<ScoreDoc>, doc: ScoreDoc): Promise<void> {
+  const full = { ...doc, nameKey: doc.name.toLowerCase() };
+  const r = await coll.updateOne(
+    { nameKey: full.nameKey, finalMass: { $lt: full.finalMass } },
+    { $set: full },
+  );
+  if (r.matchedCount === 0) {
+    await coll.updateOne(
+      { nameKey: full.nameKey },
+      { $setOnInsert: full },
+      { upsert: true },
+    );
+  }
+}
+
 async function flushPendingWrites(): Promise<void> {
   if (!scoresColl) return;
   if (pendingWrites.length === 0) return;
   const batch = pendingWrites.splice(0, pendingWrites.length);
-  try {
-    await scoresColl.insertMany(batch);
-    console.log(`[mongo] flushed ${batch.length} queued score(s) on reconnect`);
-  } catch (err) {
-    console.warn(`[mongo] flush failed; re-queueing ${batch.length} scores: ${(err as Error).message}`);
-    // re-queue (cap respected)
-    for (const d of batch) {
+  let flushed = 0;
+  const failed: ScoreDoc[] = [];
+  for (const doc of batch) {
+    try {
+      await upsertScore(scoresColl, doc);
+      flushed++;
+    } catch (err) {
+      console.warn(`[mongo] flush upsert failed: ${(err as Error).message}`);
+      failed.push(doc);
+    }
+  }
+  if (flushed > 0) console.log(`[mongo] flushed ${flushed} queued score(s) on reconnect`);
+  if (failed.length > 0) {
+    for (const d of failed) {
       if (pendingWrites.length < QUEUE_CAP) pendingWrites.push(d);
     }
   }
@@ -98,7 +128,7 @@ export async function writeScore(doc: ScoreDoc): Promise<void> {
     return;
   }
   try {
-    await coll.insertOne(doc);
+    await upsertScore(coll, doc);
   } catch (err) {
     console.warn(`[mongo] writeScore failed, queuing: ${(err as Error).message}`);
     if (pendingWrites.length < QUEUE_CAP) pendingWrites.push(doc);

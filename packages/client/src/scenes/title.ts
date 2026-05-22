@@ -1,11 +1,5 @@
 import { initSound } from "../sound.ts";
-
-const COLOR_PALETTE = [
-  "#ffd97f", "#ff85a1", "#7fcfff", "#9affcf",
-  "#caa8ff", "#ff9fa4", "#8fffd8", "#ffa07f",
-  "#ffcf6b", "#9cd2ff", "#a0ffcc", "#ff7fbf",
-  "#7fffd4", "#ffb37f", "#b07fff", "#7fffa1",
-];
+import { COLOR_PALETTE } from "../identity.ts";
 
 export interface TitleResult {
   name: string;
