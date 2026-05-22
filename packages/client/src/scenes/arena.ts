@@ -1,4 +1,6 @@
 import { Application, Container, Graphics } from "pixi.js";
+import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
+import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouWeaponSlot, LevelUpMsg } from "@fcf/shared";
 import { ARENA, fishRadius, WEAPONS, getWeaponLevel, viewRadius } from "@fcf/shared";
 import { NetSocket } from "../net/socket.ts";
@@ -6,12 +8,15 @@ import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
 import { ParticleSystem } from "../render/particles.ts";
+import { WaterCausticFilter } from "../render/water-filter.ts";
 import { mountLevelUp, type LevelUpMount } from "./level-up.ts";
 import { mountToastHud, type ToastHud } from "../hud/toast.ts";
 import { mountRosterHud, type RosterHud } from "../hud/roster.ts";
 import { mountIdentityEditor, type IdentityEditorMount } from "../hud/identity-editor.ts";
+import { mountScoreboardHud, type ScoreboardHud } from "../hud/scoreboard.ts";
 import { saveIdentity } from "../identity.ts";
 import * as snd from "../sound.ts";
+import { perf } from "../perf.ts";
 
 interface FishState {
   id: number;
@@ -85,9 +90,11 @@ export class ArenaScene {
   causticsLayer = new Container();
   plankton: Graphics[] = [];
   planktonData: Array<{x: number; y: number; baseY: number; phase: number; speed: number; size: number; alpha: number}> = [];
-  caustic1 = new Graphics();
-  caustic2 = new Graphics();
-  caustic3 = new Graphics();
+  private waterFilter = new WaterCausticFilter();
+  private bloomFilter: AdvancedBloomFilter;
+  private hitFlashFilter: RGBSplitFilter;
+  private hitFlashUntil = 0;
+  private hitFlashActive = false;
   pelletLayer = new Container();
   projectileLayer = new Container();
   chunkLayer = new Container();
@@ -95,6 +102,7 @@ export class ArenaScene {
   hud: HudElements;
   private toastHud: ToastHud;
   private rosterHud: RosterHud;
+  private scoreboardHud: ScoreboardHud;
 
   private net: NetSocket;
   private input = createInput();
@@ -136,6 +144,24 @@ export class ArenaScene {
     this.hud = mountHud();
     this.toastHud = mountToastHud();
     this.rosterHud = mountRosterHud();
+    this.scoreboardHud = mountScoreboardHud();
+
+    this.bloomFilter = new AdvancedBloomFilter({
+      threshold: 0.65,
+      bloomScale: 1.1,
+      brightness: 1.0,
+      blur: 5,
+      quality: 4,
+    });
+    // Without explicit padding the bloom is sampled from a render texture sized
+    // to the projectile content's bounds, so glow extending past the edge of
+    // any single projectile gets clipped — looks like a flat cutoff.
+    this.bloomFilter.padding = 24;
+    this.hitFlashFilter = new RGBSplitFilter({
+      red: { x: -6, y: 0 },
+      green: { x: 0, y: 0 },
+      blue: { x: 6, y: 0 },
+    });
 
     this.world.addChild(this.bg);
     this.world.addChild(this.causticsLayer);
@@ -145,9 +171,10 @@ export class ArenaScene {
     this.world.addChild(this.fishLayer);
     this.world.addChild(this.particles.container);
     this.app.stage.addChild(this.world);
-    this.causticsLayer.addChild(this.caustic1);
-    this.causticsLayer.addChild(this.caustic2);
-    this.causticsLayer.addChild(this.caustic3);
+
+    // Caustic water shader is overlaid on the base background.
+    this.bg.filters = [this.waterFilter];
+    this.projectileLayer.filters = [this.bloomFilter];
     this.seedPlankton();
 
     this.drawBackground();
@@ -194,7 +221,11 @@ export class ArenaScene {
     this.net.on("welcome", (msg: WelcomeMsg) => {
       if (msg.selfId) this.selfId = msg.selfId;
     });
-    this.net.on("snapshot", (msg) => this.applySnapshot(msg));
+    this.net.on("snapshot", (msg) => {
+      const span = perf.begin("snapshot");
+      this.applySnapshot(msg);
+      span.end();
+    });
     this.net.on("eaten", (msg) => {
       this.tearDownLevelUp();
       snd.playDeath();
@@ -296,30 +327,19 @@ export class ArenaScene {
       const dx = Math.cos(tSec * 0.4 + d.phase * 1.3) * 5;
       g.y = d.baseY + dy - tSec * d.speed * 2;
       g.x = d.x + dx;
-      // wrap vertically across the arena
       if (g.y < 0) g.y += ARENA.height;
       if (g.y > ARENA.height) g.y -= ARENA.height;
     }
-    // caustic shimmer — three large translucent ellipses that breathe and drift
-    const a = Math.sin(tSec * 0.15) * 0.5 + 0.5;
-    this.caustic1.clear();
-    this.caustic1.ellipse(
-      ARENA.width * 0.35 + Math.cos(tSec * 0.1) * 400,
-      ARENA.height * 0.4 + Math.sin(tSec * 0.13) * 250,
-      1700, 1100,
-    ).fill({ color: 0x7fcfff, alpha: 0.025 + a * 0.02 });
-    this.caustic2.clear();
-    this.caustic2.ellipse(
-      ARENA.width * 0.65 + Math.sin(tSec * 0.12) * 350,
-      ARENA.height * 0.55 + Math.cos(tSec * 0.18) * 320,
-      1500, 1300,
-    ).fill({ color: 0xffe884, alpha: 0.018 + (1 - a) * 0.015 });
-    this.caustic3.clear();
-    this.caustic3.ellipse(
-      ARENA.width * 0.5 + Math.cos(tSec * 0.08) * 600,
-      ARENA.height * 0.7 + Math.sin(tSec * 0.06) * 220,
-      2000, 900,
-    ).fill({ color: 0xb088ff, alpha: 0.012 + a * 0.012 });
+    // Drive the caustic shader with current time + camera world rect.
+    this.waterFilter.setTime(tSec);
+    const scale = this.world.scale.x || 1;
+    const screenW = this.app.renderer.width;
+    const screenH = this.app.renderer.height;
+    const visibleW = screenW / scale;
+    const visibleH = screenH / scale;
+    const camX = -this.world.x / scale;
+    const camY = -this.world.y / scale;
+    this.waterFilter.setWorldRect(camX, camY, visibleW, visibleH);
   }
 
   private applySnapshot(msg: SnapshotMsg): void {
@@ -347,6 +367,7 @@ export class ArenaScene {
     }
     if (hpBefore >= 0 && msg.you.hp < hpBefore - 1) {
       snd.playHit(0.7);
+      this.hitFlashUntil = recvTime + 140;
     }
     if (boostReadyBefore > 0 && msg.you.boostReadyAt - boostReadyBefore > 5000) {
       // new boost just started (cooldown jumped by ≥5s)
@@ -580,6 +601,7 @@ export class ArenaScene {
 
     // interpolate and render fish
     const renderTime = now - INTERP_DELAY_MS;
+    const fishSpan = perf.begin("fish-interp");
     for (const f of this.fishes.values()) {
       const span = Math.max(1, f.nextTime - f.prevTime);
       const t = Math.max(0, Math.min(1, (now - f.prevTime) / span));
@@ -590,14 +612,18 @@ export class ArenaScene {
       f.sprite.setTransform(x, y, vx, vy);
       f.sprite.update(f.mass, f.hp, f.maxHp, dt);
     }
+    fishSpan.end();
 
+    const chunkSpan = perf.begin("chunk-interp");
     for (const c of this.chunks.values()) {
       const span = Math.max(1, c.nextTime - c.prevTime);
       const t = Math.max(0, Math.min(1, (now - c.prevTime) / span));
       c.gfx.x = c.prevX + (c.nextX - c.prevX) * t;
       c.gfx.y = c.prevY + (c.nextY - c.prevY) * t;
     }
+    chunkSpan.end();
 
+    const projSpan = perf.begin("proj-interp");
     for (const p of this.projectiles.values()) {
       const span = Math.max(1, p.nextTime - p.prevTime);
       const t = Math.max(0, Math.min(1, (now - p.prevTime) / span));
@@ -607,6 +633,7 @@ export class ArenaScene {
       // pulse rings fade out over their lifetime
       p.sprite.tickAge(now, p.weaponId === "pulse" || p.weaponId === "eel" ? 280 : null);
     }
+    projSpan.end();
 
     // camera
     const self = this.selfId ? this.fishes.get(this.selfId) : undefined;
@@ -628,8 +655,27 @@ export class ArenaScene {
       this.world.y = screenH / 2 - self.sprite.container.y * zoom;
     }
 
+    const bgSpan = perf.begin("background");
     this.animateBackground(now);
+    bgSpan.end();
+    const partSpan = perf.begin("particles");
     this.particles.update(dt);
+    partSpan.end();
+    // Hit-flash: chromatic split kicks in briefly when self takes damage.
+    if (now < this.hitFlashUntil) {
+      const remaining = this.hitFlashUntil - now;
+      const t = Math.max(0, Math.min(1, remaining / 140));
+      const offset = 8 * t;
+      this.hitFlashFilter.red = { x: -offset, y: 0 };
+      this.hitFlashFilter.blue = { x: offset, y: 0 };
+      if (!this.hitFlashActive) {
+        this.world.filters = [this.hitFlashFilter];
+        this.hitFlashActive = true;
+      }
+    } else if (this.hitFlashActive) {
+      this.world.filters = [];
+      this.hitFlashActive = false;
+    }
     if (now < this.boostFxUntil && this.selfId) {
       const me = this.fishes.get(this.selfId);
       if (me) {
@@ -639,6 +685,12 @@ export class ArenaScene {
     }
     this.updateHud();
     this.updateWeaponsHud(now);
+
+    perf.setCount("fish", this.fishes.size);
+    perf.setCount("pellets", this.pellets.size);
+    perf.setCount("chunks", this.chunks.size);
+    perf.setCount("projectiles", this.projectiles.size);
+    perf.frame();
   };
 
   private updateWeaponsHud(now: number): void {
@@ -719,6 +771,7 @@ export class ArenaScene {
     this.hud.root.remove();
     this.toastHud.teardown();
     this.rosterHud.teardown();
+    this.scoreboardHud.teardown();
   }
 }
 

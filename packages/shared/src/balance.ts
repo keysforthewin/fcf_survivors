@@ -79,5 +79,5 @@ export function canEat(predatorMass: number, preyMass: number): boolean {
 }
 
 export function xpForLevel(level: number): number {
-  return Math.floor(2 * Math.pow(1.1, level));
+  return Math.floor(3 * Math.pow(1.05, level));
 }

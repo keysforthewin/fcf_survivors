@@ -62,6 +62,7 @@ export async function ensureMongo(): Promise<Collection<ScoreDoc> | null> {
     await coll.createIndex({ finalMass: -1 });
     await coll.createIndex({ endedAt: -1 });
     await coll.createIndex({ kills: -1 });
+    await migrateNameKey(coll);
     await coll.createIndex({ nameKey: 1 }, { unique: true });
     await coll.createIndex({ "weapons.id": 1 });
     client = c;
@@ -73,6 +74,50 @@ export async function ensureMongo(): Promise<Collection<ScoreDoc> | null> {
     connectFailed = true;
     console.warn(`[mongo] connection failed — scores will be ephemeral: ${(err as Error).message}`);
     return null;
+  }
+}
+
+/**
+ * Idempotent migration for the unique nameKey index. Backfills nameKey on
+ * legacy docs that predate it, then collapses duplicates by keeping only the
+ * highest-finalMass doc per nameKey. Safe to run on every boot.
+ */
+async function migrateNameKey(coll: Collection<ScoreDoc>): Promise<void> {
+  const missing = coll.find({
+    $or: [{ nameKey: { $exists: false } }, { nameKey: { $eq: null as any } }],
+  });
+  let backfilled = 0;
+  let dropped = 0;
+  for await (const doc of missing) {
+    const name = typeof doc.name === "string" ? doc.name : "";
+    if (name.length === 0) {
+      await coll.deleteOne({ _id: (doc as any)._id });
+      dropped++;
+      continue;
+    }
+    await coll.updateOne({ _id: (doc as any)._id }, { $set: { nameKey: name.toLowerCase() } });
+    backfilled++;
+  }
+
+  const groups = await coll
+    .aggregate<{ _id: string; ids: Array<{ id: unknown; finalMass: number }> }>([
+      { $match: { nameKey: { $type: "string" } } },
+      { $group: { _id: "$nameKey", ids: { $push: { id: "$_id", finalMass: "$finalMass" } } } },
+      { $match: { $expr: { $gt: [{ $size: "$ids" }, 1] } } },
+    ])
+    .toArray();
+  let deduped = 0;
+  for (const g of groups) {
+    const sorted = [...g.ids].sort((a, b) => (b.finalMass ?? 0) - (a.finalMass ?? 0));
+    const toDelete = sorted.slice(1).map((d) => d.id);
+    if (toDelete.length > 0) {
+      const r = await coll.deleteMany({ _id: { $in: toDelete as any } });
+      deduped += r.deletedCount ?? 0;
+    }
+  }
+
+  if (backfilled || dropped || deduped) {
+    console.log(`[mongo] migrate nameKey: backfilled=${backfilled} dropped=${dropped} deduped=${deduped}`);
   }
 }
 

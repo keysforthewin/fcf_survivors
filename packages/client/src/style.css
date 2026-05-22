@@ -663,6 +663,56 @@ button.play:active { transform: translateY(0); }
 
 .hidden { display: none !important; }
 
+/* === Scoreboard (F2 toggle) === */
+.scoreboard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(2, 8, 14, 0.55);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.scoreboard-panel {
+  width: min(420px, 92vw);
+  background: rgba(10, 22, 34, 0.92);
+  border: 1px solid rgba(127, 207, 255, 0.25);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  padding: 14px 14px 10px;
+  color: var(--text);
+  font: 0.85rem/1.4 inherit;
+}
+
+.scoreboard-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.scoreboard-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.scoreboard-hint {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.scoreboard-list-wrap {
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
 /* === Toasts === */
 .toast-container {
   position: fixed;

@@ -3,6 +3,7 @@ import { fishRadius } from "@fcf/shared";
 
 export class FishSprite {
   container = new Container();
+  private bodyGroup = new Container();
   private body = new Graphics();
   private tail = new Graphics();
   private dorsal = new Graphics();
@@ -19,16 +20,21 @@ export class FishSprite {
   private headingX = 1;
   private headingY = 0;
   private hasGlow = false;
+  private speed = 0;
+  private stretchX = 1;
+  private stretchY = 1;
 
   constructor(name: string, color: string, isAi: boolean) {
     this.color = parseColor(color);
     this.isAi = isAi;
-    // Layer order (back → front): glow, tail, body, dorsal, eye, hpBar, label
+    // Layer order (back → front): glow, [bodyGroup: tail, body, dorsal, eye], hpBar, label.
+    // bodyGroup is the squash-stretch carrier — glow/hpBar/label stay un-distorted.
     this.container.addChild(this.glow);
-    this.container.addChild(this.tail);
-    this.container.addChild(this.body);
-    this.container.addChild(this.dorsal);
-    this.container.addChild(this.eye);
+    this.container.addChild(this.bodyGroup);
+    this.bodyGroup.addChild(this.tail);
+    this.bodyGroup.addChild(this.body);
+    this.bodyGroup.addChild(this.dorsal);
+    this.bodyGroup.addChild(this.eye);
     this.container.addChild(this.hpBar);
     const style = new TextStyle({
       fontFamily: "Inter, system-ui, sans-serif",
@@ -47,6 +53,7 @@ export class FishSprite {
     this.container.x = x;
     this.container.y = y;
     const speed = Math.hypot(vx, vy);
+    this.speed = speed;
     if (speed > 5) {
       this.headingX = vx / speed;
       this.headingY = vy / speed;
@@ -72,8 +79,14 @@ export class FishSprite {
     this.swimPhase += dt * (8 + Math.min(4, mass / 50));
     const wiggle = Math.sin(this.swimPhase) * 0.28;
     this.tail.rotation = wiggle;
-    // small counter-sway on dorsal so it feels alive
     this.dorsal.rotation = -wiggle * 0.4;
+    // Velocity-driven squash-stretch: faster fish stretch forward and squash vertically.
+    // Speed is in world units / second; ~200 is a brisk swim.
+    const target = Math.max(0, Math.min(0.22, this.speed / 900));
+    const ease = 1 - Math.pow(0.001, dt);
+    this.stretchX += (1 + target - this.stretchX) * ease;
+    this.stretchY += (1 - target * 0.5 - this.stretchY) * ease;
+    this.bodyGroup.scale.set(this.stretchX, this.stretchY);
   }
 
   private draw(radius: number, hpPct: number): void {

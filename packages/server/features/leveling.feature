@@ -18,7 +18,7 @@ Feature: XP and level progression
     And "Alpha" has accumulated 100 XP
     When level-ups are processed
     Then "Alpha" has level 2
-    And "Alpha" has XP 98
+    And "Alpha" has XP 97
     And "Alpha" has a pending level-up modal
 
   Scenario: Level-ups do not cascade while a card modal is pending
@@ -27,7 +27,7 @@ Feature: XP and level progression
     When level-ups are processed
     And level-ups are processed
     Then "Alpha" has level 2
-    And "Alpha" has XP 98
+    And "Alpha" has XP 97
 
   Scenario: AI fish do not level up
     Given an AI fish "Bob" at (1000, 1000) with mass 50
@@ -36,6 +36,6 @@ Feature: XP and level progression
     Then "Bob" has level 1
 
   Scenario: The xpForLevel curve is preserved
-    Then the XP threshold for level 1 is 2
-    And the XP threshold for level 2 is 2
+    Then the XP threshold for level 1 is 3
+    And the XP threshold for level 2 is 3
     And the XP threshold for level 5 is 3
