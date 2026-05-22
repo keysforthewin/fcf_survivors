@@ -1,4 +1,4 @@
-import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, parseCardId } from "@fcf/shared";
+import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
 import { ARENA, TICK } from "@fcf/shared";
 import { World, type WorldDeps } from "./sim/world.ts";
 import { processLevelUps, applyCard } from "./sim/levelup.ts";
@@ -63,6 +63,35 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     try {
       ws.send(JSON.stringify(msg));
     } catch {}
+  }
+
+  function broadcast(msg: ServerMsg, exclude?: Bun.ServerWebSocket<SocketData>): void {
+    for (const ws of sockets.values()) {
+      if (ws === exclude) continue;
+      send(ws, msg);
+    }
+  }
+
+  function rosterForSocket(myFishId: number | null): RosterEntry[] {
+    const out: RosterEntry[] = [];
+    for (const f of world.fish.values()) {
+      if (!f.alive || f.isAi) continue;
+      out.push({
+        name: f.name,
+        color: f.color,
+        mass: f.mass,
+        level: f.level,
+        isMe: f.id === myFishId,
+      });
+    }
+    out.sort((a, b) => b.mass - a.mass);
+    return out;
+  }
+
+  function broadcastRoster(): void {
+    for (const ws of sockets.values()) {
+      send(ws, { t: "roster", players: rosterForSocket(ws.data.fishId) } satisfies RosterMsg);
+    }
   }
 
   async function broadcastLeaderboard(target?: Bun.ServerWebSocket<SocketData>): Promise<void> {
@@ -159,6 +188,13 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // notify dead players + persist score
     for (const dp of deadPlayers) {
       const ws = [...sockets.values()].find((s) => s.data.fishId === dp.fishId);
+      // Broadcast playerDied to everyone except the dying socket (or to everyone
+      // if the socket is already gone — disconnect case).
+      broadcast(
+        { t: "playerDied", name: dp.name, color: dp.color, byName: dp.killerName } satisfies PlayerDiedMsg,
+        ws,
+      );
+      broadcastRoster();
       if (!ws) continue;
       const startedAt = ws.data.startedAt;
       const durationMs = wallNow - startedAt;
@@ -226,6 +262,10 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       send(ws, snap);
     }
 
+    // periodic roster broadcast (~2Hz) as a backup for mass/level updates.
+    // Join/death events also push an immediate roster — see broadcastRoster() above.
+    if (world.tick % 10 === 0) broadcastRoster();
+
     // clear removed buffer
     world.removedIds.length = 0;
   }, TICK.ms);
@@ -289,6 +329,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
             arena: { width: ARENA.width, height: ARENA.height },
             tickHz: TICK.hz,
           });
+          broadcast({ t: "playerJoined", name, color } satisfies PlayerJoinedMsg, ws);
+          broadcastRoster();
         } else if (msg.t === "input") {
           const fid = ws.data.fishId;
           if (fid === null) return;

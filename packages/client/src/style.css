@@ -625,3 +625,109 @@ button.play:active { transform: translateY(0); }
 }
 
 .hidden { display: none !important; }
+
+/* === Toasts === */
+.toast-container {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.toast {
+  background: rgba(6, 18, 28, 0.78);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-left: 3px solid var(--toast-accent, var(--accent-2));
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(6px);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+
+.toast.toast-out {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* === Roster === */
+.roster {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  width: 200px;
+  background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  z-index: 5;
+  font-size: 0.8rem;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.roster-header {
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.roster-body {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  max-height: 40vh;
+  overflow: hidden;
+}
+
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.roster-row.is-me {
+  background: rgba(127,207,255,0.10);
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.roster-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.roster-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-mass {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.roster-row.is-me .roster-mass {
+  color: var(--accent-2);
+}

@@ -120,4 +120,40 @@ export interface LeaderboardMsg {
   top: LeaderboardEntry[];
 }
 
-export type ServerMsg = WelcomeMsg | SnapshotMsg | LevelUpMsg | EatenMsg | LeaderboardMsg;
+export interface PlayerJoinedMsg {
+  t: "playerJoined";
+  name: string;
+  color: string;
+}
+
+export interface PlayerDiedMsg {
+  t: "playerDied";
+  name: string;
+  color: string;
+  /** Name of the eater. "the void" when no killer was nearby (e.g. disconnect or solo death). */
+  byName: string;
+}
+
+export interface RosterEntry {
+  name: string;
+  color: string;
+  mass: number;
+  level: number;
+  /** True for the row that represents the receiving socket's own fish. */
+  isMe: boolean;
+}
+
+export interface RosterMsg {
+  t: "roster";
+  players: RosterEntry[];
+}
+
+export type ServerMsg =
+  | WelcomeMsg
+  | SnapshotMsg
+  | LevelUpMsg
+  | EatenMsg
+  | LeaderboardMsg
+  | PlayerJoinedMsg
+  | PlayerDiedMsg
+  | RosterMsg;

@@ -37,6 +37,20 @@ export const AI = {
   fleeSpeed: 240,
   chaseSpeed: 220,
   sightRadius: 400,
+  /** Switch targets only if a new candidate's distance is < this fraction of the current target's distance. */
+  targetSwitchHysteresis: 0.75,
+  /** Sample interval for stuck detection (ms). */
+  stuckSampleIntervalMs: 500,
+  /** Below this displacement per sample window, the fish is considered not moving. */
+  stuckThreshold: 30,
+  /** Time stuck-with-a-target before the target is blacklisted (ms). */
+  stuckTriggerMs: 3000,
+  /** How long a blacklisted target stays ignored (ms). */
+  blacklistDurationMs: 20000,
+  /** Hard cap on neighbor-separation query radius (units). Effective radius is min(this, 2 * fishRadius). */
+  separationRadius: 80,
+  /** Blend weight of the unit separation vector added to the steering direction. */
+  separationWeight: 0.35,
 } as const;
 
 export const VIEW = {

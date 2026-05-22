@@ -1,4 +1,4 @@
-import { AI, ARENA, FISH, fishHp, canEat } from "@fcf/shared";
+import { AI, ARENA, fishHp, canEat } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
 
@@ -21,11 +21,14 @@ export function spawnAiFish(world: World, mass?: number): Fish {
   const rng = world.rng;
   const m = mass ?? (AI.startMassMin + rng() * (AI.startMassMax - AI.startMassMin));
   const id = world.nextId();
+  const now = world.now();
+  const x = rng() * ARENA.width;
+  const y = rng() * ARENA.height;
   const fish: Fish = {
     id,
     kind: "fish",
-    x: rng() * ARENA.width,
-    y: rng() * ARENA.height,
+    x,
+    y,
     vx: 0,
     vy: 0,
     targetVx: 0,
@@ -44,7 +47,7 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     level: 1,
     xp: 0,
     kills: 0,
-    spawnedAt: world.now(),
+    spawnedAt: now,
     socketId: null,
     alive: true,
     aiState: {
@@ -52,6 +55,12 @@ export function spawnAiFish(world: World, mass?: number): Fish {
       modeUntil: 0,
       wanderHeading: rng() * Math.PI * 2,
       targetId: null,
+      targetSince: now,
+      lastSampleX: x,
+      lastSampleY: y,
+      lastSampleAt: now,
+      stuckSince: null,
+      blacklist: new Map(),
     },
     weapons: [],
     passives: new Map(),
@@ -64,11 +73,71 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   if (!fish.isAi || !fish.aiState) return;
   const state = fish.aiState;
   const rng = world.rng;
+  const sightR2 = AI.sightRadius * AI.sightRadius;
+
+  // Stuck sampling: every stuckSampleIntervalMs, check whether the fish moved
+  // far enough. After stuckTriggerMs of not moving, blacklist the current target
+  // and force a wander so the fish stops re-acquiring the same dead end.
+  if (now - state.lastSampleAt >= AI.stuckSampleIntervalMs) {
+    const dxs = fish.x - state.lastSampleX;
+    const dys = fish.y - state.lastSampleY;
+    if (dxs * dxs + dys * dys < AI.stuckThreshold * AI.stuckThreshold) {
+      if (state.stuckSince == null) state.stuckSince = now;
+    } else {
+      state.stuckSince = null;
+    }
+    state.lastSampleX = fish.x;
+    state.lastSampleY = fish.y;
+    state.lastSampleAt = now;
+
+    if (
+      state.stuckSince != null &&
+      now - state.stuckSince >= AI.stuckTriggerMs &&
+      state.targetId != null
+    ) {
+      state.blacklist.set(state.targetId, now + AI.blacklistDurationMs);
+      state.targetId = null;
+      state.targetSince = now;
+      state.mode = "wander";
+      state.modeUntil = now + 1500;
+      state.wanderHeading = rng() * Math.PI * 2;
+      state.stuckSince = null;
+    }
+  }
+
+  if (state.blacklist.size > 0) {
+    for (const [id, expiry] of state.blacklist) {
+      if (expiry <= now) state.blacklist.delete(id);
+    }
+  }
 
   if (now >= state.modeUntil) {
     state.mode = "wander";
     state.modeUntil = now + 1500 + rng() * 2500;
     state.wanderHeading += (rng() - 0.5) * 1.2;
+  }
+
+  // Validate the current target so hysteresis can compare against it.
+  let currentPredator: Fish | null = null;
+  let currentPredatorD2 = Infinity;
+  let currentPrey: Fish | null = null;
+  let currentPreyD2 = Infinity;
+  if (state.targetId != null) {
+    const t = world.fish.get(state.targetId);
+    if (t && t.alive) {
+      const dx = t.x - fish.x;
+      const dy = t.y - fish.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= sightR2) {
+        if (canEat(t.mass, fish.mass)) {
+          currentPredator = t;
+          currentPredatorD2 = d2;
+        } else if (canEat(fish.mass, t.mass)) {
+          currentPrey = t;
+          currentPreyD2 = d2;
+        }
+      }
+    }
   }
 
   let nearestPredator: Fish | null = null;
@@ -78,10 +147,11 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
 
   for (const other of world.fish.values()) {
     if (other.id === fish.id || !other.alive) continue;
+    if (state.blacklist.has(other.id)) continue;
     const dx = other.x - fish.x;
     const dy = other.y - fish.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 > AI.sightRadius * AI.sightRadius) continue;
+    if (d2 > sightR2) continue;
     if (canEat(other.mass, fish.mass)) {
       if (d2 < predatorDist) {
         predatorDist = d2;
@@ -95,28 +165,54 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     }
   }
 
+  // Hysteresis: keep the current target unless a new candidate is meaningfully closer.
+  const hystSq = AI.targetSwitchHysteresis * AI.targetSwitchHysteresis;
+  let chosenPredator: Fish | null;
+  if (currentPredator && nearestPredator && currentPredator.id !== nearestPredator.id) {
+    chosenPredator = predatorDist < hystSq * currentPredatorD2 ? nearestPredator : currentPredator;
+  } else {
+    chosenPredator = nearestPredator ?? currentPredator;
+  }
+  let chosenPrey: Fish | null;
+  if (currentPrey && nearestPrey && currentPrey.id !== nearestPrey.id) {
+    chosenPrey = preyDist < hystSq * currentPreyD2 ? nearestPrey : currentPrey;
+  } else {
+    chosenPrey = nearestPrey ?? currentPrey;
+  }
+
   let speed: number = AI.wanderSpeed;
   let tvx = Math.cos(state.wanderHeading);
   let tvy = Math.sin(state.wanderHeading);
 
-  if (nearestPredator) {
+  if (chosenPredator) {
+    if (state.targetId !== chosenPredator.id) {
+      state.targetId = chosenPredator.id;
+      state.targetSince = now;
+    }
     state.mode = "flee";
     state.modeUntil = now + 1500;
-    const dx = fish.x - nearestPredator.x;
-    const dy = fish.y - nearestPredator.y;
+    const dx = fish.x - chosenPredator.x;
+    const dy = fish.y - chosenPredator.y;
     const len = Math.hypot(dx, dy) || 1;
     tvx = dx / len;
     tvy = dy / len;
     speed = AI.fleeSpeed;
-  } else if (nearestPrey) {
+  } else if (chosenPrey) {
+    if (state.targetId !== chosenPrey.id) {
+      state.targetId = chosenPrey.id;
+      state.targetSince = now;
+    }
     state.mode = "chase";
     state.modeUntil = now + 1500;
-    const dx = nearestPrey.x - fish.x;
-    const dy = nearestPrey.y - fish.y;
+    const dx = chosenPrey.x - fish.x;
+    const dy = chosenPrey.y - fish.y;
     const len = Math.hypot(dx, dy) || 1;
     tvx = dx / len;
     tvy = dy / len;
     speed = AI.chaseSpeed;
+  } else if (state.targetId !== null) {
+    state.targetId = null;
+    state.targetSince = now;
   }
 
   // bounce off walls
@@ -126,10 +222,42 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   if (fish.y < margin) tvy = Math.max(tvy, 0.3);
   if (fish.y > ARENA.height - margin) tvy = Math.min(tvy, -0.3);
 
+  // Neighbor separation: blend in a push-away from same-tier fish (peers, not
+  // eat/eaten). fishHash reflects last tick's positions (rebuilt at end of step),
+  // which is fine for steering. Empty on tick 0.
+  const sepScratch: Fish[] = [];
+  world.fishHash.query(fish.x, fish.y, AI.separationRadius, sepScratch);
+  let sepX = 0;
+  let sepY = 0;
+  let sepCount = 0;
+  const sepR2 = AI.separationRadius * AI.separationRadius;
+  for (const other of sepScratch) {
+    if (other.id === fish.id || !other.alive) continue;
+    if (canEat(other.mass, fish.mass) || canEat(fish.mass, other.mass)) continue;
+    const dx = fish.x - other.x;
+    const dy = fish.y - other.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < 0.001 || d2 > sepR2) continue;
+    sepX += dx / d2;
+    sepY += dy / d2;
+    sepCount++;
+  }
+  if (sepCount > 0) {
+    const sepLen = Math.hypot(sepX, sepY);
+    if (sepLen > 0) {
+      tvx += (sepX / sepLen) * AI.separationWeight;
+      tvy += (sepY / sepLen) * AI.separationWeight;
+      const m = Math.hypot(tvx, tvy);
+      if (m > 1) {
+        tvx /= m;
+        tvy /= m;
+      }
+    }
+  }
+
   fish.targetVx = tvx;
   fish.targetVy = tvy;
 
-  // ai uses its own speed model
   const desiredVx = tvx * speed;
   const desiredVy = tvy * speed;
   const accel = 8 * dt;

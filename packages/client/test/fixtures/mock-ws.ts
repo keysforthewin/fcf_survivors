@@ -73,12 +73,24 @@ export async function installMockWebSocket(page: Page): Promise<void> {
         finalLevel: 3,
         kills: 2,
         durationMs: 60_000,
+        weapons: [],
+        passives: [],
+        evolution: null,
         ...payload,
       };
       __test.emitAll(base);
     };
     __test.leaderboard = (top: any[] = []): void => {
       __test.emitAll({ t: "leaderboard", top });
+    };
+    __test.playerJoined = (name: string, color = "#7fcfff"): void => {
+      __test.emitAll({ t: "playerJoined", name, color });
+    };
+    __test.playerDied = (name: string, byName = "the void", color = "#7fcfff"): void => {
+      __test.emitAll({ t: "playerDied", name, color, byName });
+    };
+    __test.roster = (players: any[] = []): void => {
+      __test.emitAll({ t: "roster", players });
     };
 
     class MockWebSocket extends EventTarget {

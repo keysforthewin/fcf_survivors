@@ -55,6 +55,12 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
       modeUntil: sim.clock.now() + 2000,
       wanderHeading: 0,
       targetId: null,
+      targetSince: sim.clock.now(),
+      lastSampleX: seed.x,
+      lastSampleY: seed.y,
+      lastSampleAt: sim.clock.now(),
+      stuckSince: null,
+      blacklist: new Map(),
     };
     fish.aiState = aiState;
   }

@@ -60,6 +60,16 @@ export interface AiState {
   modeUntil: number;
   wanderHeading: number;
   targetId: EntityId | null;
+  /** Wall-time when the current targetId was last set. */
+  targetSince: number;
+  /** Position + time of the last stuck-detection sample. */
+  lastSampleX: number;
+  lastSampleY: number;
+  lastSampleAt: number;
+  /** Wall-time when we first noticed this fish hadn't moved meaningfully (null when moving). */
+  stuckSince: number | null;
+  /** entityId → wall-time when the blacklist entry expires. */
+  blacklist: Map<EntityId, number>;
 }
 
 export interface Pellet {

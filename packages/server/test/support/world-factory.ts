@@ -103,6 +103,12 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
         modeUntil: t + 2000,
         wanderHeading: 0,
         targetId: null,
+        targetSince: t,
+        lastSampleX: seed.x,
+        lastSampleY: seed.y,
+        lastSampleAt: t,
+        stuckSince: null,
+        blacklist: new Map(),
       };
     }
     world.fish.set(id, fish);

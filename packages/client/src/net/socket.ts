@@ -4,11 +4,22 @@ import type {
   InputMsg,
   LeaderboardMsg,
   LevelUpMsg,
+  PlayerJoinedMsg,
+  PlayerDiedMsg,
+  RosterMsg,
   SnapshotMsg,
   WelcomeMsg,
 } from "@fcf/shared";
 
-type ServerMsg = WelcomeMsg | SnapshotMsg | LevelUpMsg | EatenMsg | LeaderboardMsg;
+type ServerMsg =
+  | WelcomeMsg
+  | SnapshotMsg
+  | LevelUpMsg
+  | EatenMsg
+  | LeaderboardMsg
+  | PlayerJoinedMsg
+  | PlayerDiedMsg
+  | RosterMsg;
 
 type Handler<T extends ServerMsg> = (msg: T) => void;
 

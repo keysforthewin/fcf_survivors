@@ -7,6 +7,8 @@ import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
 import { ParticleSystem } from "../render/particles.ts";
 import { mountLevelUp, type LevelUpMount } from "./level-up.ts";
+import { mountToastHud, type ToastHud } from "../hud/toast.ts";
+import { mountRosterHud, type RosterHud } from "../hud/roster.ts";
 import * as snd from "../sound.ts";
 
 interface FishState {
@@ -89,6 +91,8 @@ export class ArenaScene {
   chunkLayer = new Container();
   fishLayer = new Container();
   hud: HudElements;
+  private toastHud: ToastHud;
+  private rosterHud: RosterHud;
 
   private net: NetSocket;
   private input = createInput();
@@ -127,6 +131,8 @@ export class ArenaScene {
     this.net = net;
     this.callbacks = callbacks;
     this.hud = mountHud();
+    this.toastHud = mountToastHud();
+    this.rosterHud = mountRosterHud();
 
     this.world.addChild(this.bg);
     this.world.addChild(this.causticsLayer);
@@ -169,6 +175,16 @@ export class ArenaScene {
     });
     this.net.on("leaderboard", (msg) => this.callbacks.onLeaderboard(msg));
     this.net.on("levelUp", (msg: LevelUpMsg) => this.showLevelUp(msg));
+    this.net.on("playerJoined", (msg) => {
+      this.toastHud.show(`${msg.name} joined`, msg.color);
+    });
+    this.net.on("playerDied", (msg) => {
+      const text = msg.byName === "the void"
+        ? `${msg.name} left`
+        : `${msg.name} was eaten by ${msg.byName}`;
+      this.toastHud.show(text, msg.color);
+    });
+    this.net.on("roster", (msg) => this.rosterHud.update(msg.players));
   }
 
   private showLevelUp(msg: LevelUpMsg): void {
@@ -664,6 +680,8 @@ export class ArenaScene {
     this.projectiles.clear();
     this.world.destroy({ children: true });
     this.hud.root.remove();
+    this.toastHud.teardown();
+    this.rosterHud.teardown();
   }
 }
 
