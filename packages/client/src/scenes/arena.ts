@@ -1,8 +1,10 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
-import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouWeaponSlot, LevelUpMsg } from "@fcf/shared";
-import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, viewRadius } from "@fcf/shared";
+import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg } from "@fcf/shared";
+import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon } from "@fcf/shared";
+import type { PassiveId, WeaponId } from "@fcf/shared";
+import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
@@ -33,8 +35,6 @@ interface FishState {
   vx: number;
   vy: number;
   mass: number;
-  hp: number;
-  maxHp: number;
   sprite: FishSprite;
 }
 
@@ -123,6 +123,9 @@ export class ArenaScene {
   private youNextLevelXp = 13;
   private youBoostReadyAt = 0;
   private youWeapons: YouWeaponSlot[] = [];
+  private youPassives: YouPassiveSlot[] = [];
+  private youPendingPicks = 0;
+  private skillPanel: SkillPanelMount | null = null;
   private destroyed = false;
   private userZoomTarget = 1;
   private userZoomCurrent = 1;
@@ -132,11 +135,18 @@ export class ArenaScene {
   private particles = new ParticleSystem();
   // FX state tracking
   private prevYouMass = -1;
-  private prevYouHp = -1;
   private prevBoostReadyAt = 0;
   private boostFxUntil = 0;
   private prevSelfX = 0;
   private prevSelfY = 0;
+  /** Camera kick magnitude (current). Decays in tick. */
+  private cameraKick = 0;
+  private cameraKickUntil = 0;
+  private cameraKickX = 0;
+  private cameraKickY = 0;
+  /** Floating damage-number overlays. Drawn in HUD layer (CSS overlay). */
+  private damageNumbers: Array<{ el: HTMLDivElement; worldX: number; worldY: number; spawnAt: number; }> = [];
+  private damageLayer: HTMLDivElement | null = null;
   // spectator state
   private mode: "play" | "spectate" = "play";
   private spectatorAnchor: number | null = null;
@@ -159,6 +169,7 @@ export class ArenaScene {
     this.toastHud = mountToastHud();
     this.rosterHud = mountRosterHud();
     this.scoreboardHud = mountScoreboardHud();
+    this.damageLayer = mountDamageLayer();
 
     this.bloomFilter = new AdvancedBloomFilter({
       threshold: 0.65,
@@ -207,6 +218,49 @@ export class ArenaScene {
     this.app.canvas.addEventListener("wheel", this.onWheel, { passive: false });
 
     this.hud.gear.addEventListener("click", () => this.openIdentityEditor());
+
+    this.hud.skillSlots.forEach((slot, idx) => {
+      slot.root.addEventListener("click", () => {
+        const wpnCount = this.youWeapons.length;
+        if (idx < wpnCount) {
+          const wpn = this.youWeapons[idx]!;
+          this.openSkillPanel({ kind: "weapon", id: wpn.id as WeaponId, level: wpn.level });
+          return;
+        }
+        const p = this.youPassives[idx - wpnCount];
+        if (p) {
+          this.openSkillPanel({ kind: "passive", id: p.id as PassiveId, stack: p.stack });
+          return;
+        }
+        // Empty slot: if a level-up is pending and the modal is dismissed,
+        // restore it so the player can pick. (When no pick is pending, no-op.)
+        this.surfaceLevelUpIfPending();
+      });
+    });
+
+    this.hud.skillHint.addEventListener("click", () => this.surfaceLevelUpIfPending());
+  }
+
+  private surfaceLevelUpIfPending(): void {
+    if (this.youPendingPicks <= 0) return;
+    if (this.levelUpMount && this.levelUpMount.isDismissed()) {
+      this.levelUpMount.restore();
+    }
+  }
+
+  private openSkillPanel(target: Parameters<typeof mountSkillPanel>[0]["target"]): void {
+    if (this.skillPanel) {
+      this.skillPanel.teardown();
+      this.skillPanel = null;
+    }
+    this.skillPanel = mountSkillPanel({
+      target,
+      onDiscard: () => {
+        if (target.kind === "weapon") this.net.discardWeapon(target.id);
+        else this.net.discardPassive(target.id);
+      },
+      onClose: () => { this.skillPanel = null; },
+    });
   }
 
   private openIdentityEditor(): void {
@@ -264,7 +318,13 @@ export class ArenaScene {
   }
 
   private showLevelUp(msg: LevelUpMsg): void {
-    this.tearDownLevelUp();
+    // If the modal is already mounted (e.g. the server rotated to the next
+    // queued pick after a pickCard), refresh in place so the player picks
+    // through the queue continuously instead of seeing teardown+remount flash.
+    if (this.levelUpMount) {
+      this.levelUpMount.updateCards(msg);
+      return;
+    }
     snd.playLevelUp();
     this.levelUpMount = mountLevelUp(this.net, msg);
   }
@@ -368,7 +428,6 @@ export class ArenaScene {
     if (msg.you) {
       // FX: detect changes to self state
       const massBefore = this.prevYouMass;
-      const hpBefore = this.prevYouHp;
       const boostReadyBefore = this.prevBoostReadyAt;
       this.youMass = msg.you.mass;
       this.youLevel = msg.you.level;
@@ -376,6 +435,8 @@ export class ArenaScene {
       this.youNextLevelXp = msg.you.nextLevelXp;
       this.youBoostReadyAt = msg.you.boostReadyAt;
       this.youWeapons = msg.you.weapons;
+      this.youPassives = msg.you.passives ?? [];
+      this.youPendingPicks = msg.you.pendingPicks ?? 0;
       if (massBefore >= 0 && msg.you.mass - massBefore > 4) {
         // big mass jump means we ate a fish
         snd.playEat(msg.you.mass);
@@ -384,20 +445,27 @@ export class ArenaScene {
       } else if (massBefore >= 0 && msg.you.mass - massBefore > 0.5) {
         snd.playPellet(0.6);
       }
-      if (hpBefore >= 0 && msg.you.hp < hpBefore - 1) {
-        snd.playHit(0.7);
-        this.hitFlashUntil = recvTime + 140;
-      }
       if (boostReadyBefore > 0 && msg.you.boostReadyAt - boostReadyBefore > 5000) {
         // new boost just started (cooldown jumped by ≥5s)
         snd.playBoost();
         this.boostFxUntil = recvTime + 1500;
       }
+      // Server is the source of truth for "still owe picks?" — when it hits
+      // zero, the active modal (if any) is done. This covers the tail of the
+      // queue: pickCard for the LAST set sends no follow-up LevelUpMsg, so the
+      // snapshot is what tells the client to tear down.
+      if (msg.you.pendingPicks === 0 && this.levelUpMount) {
+        this.tearDownLevelUp();
+      }
+
       this.prevYouMass = msg.you.mass;
-      this.prevYouHp = msg.you.hp;
       this.prevBoostReadyAt = msg.you.boostReadyAt;
       this.prevSelfX = msg.you.x;
       this.prevSelfY = msg.you.y;
+      // Store self heading so the sprite can use the server-authoritative direction.
+      if (this.selfId != null) {
+        this.fishHeading.set(this.selfId, { hx: msg.you.hx, hy: msg.you.hy });
+      }
 
       // self fish — update directly (server sends welcome with selfId before snapshots)
       if (this.selfId) this.applySelfFish(msg);
@@ -416,6 +484,70 @@ export class ArenaScene {
       this.handleEntityRemoved(id);
       this.removeEntity(id);
     }
+
+    if (msg.hits && msg.hits.length > 0) {
+      for (const h of msg.hits) this.handleHitEvent(h, recvTime);
+    }
+  }
+
+  /** Hit marker: particles + sound + floating damage number; camera kick if we own the projectile or it landed on us. */
+  private handleHitEvent(h: { x: number; y: number; damage: number; targetId: number; byOwner: boolean }, recvTime: number): void {
+    const isSelfTarget = this.selfId != null && h.targetId === this.selfId;
+    // Particle burst — scale by damage.
+    const burstColor = h.byOwner ? 0xfff8c8 : isSelfTarget ? 0xff8888 : 0xc8e8ff;
+    this.particles.emitShatter(h.x, h.y, burstColor, Math.min(36, 6 + h.damage * 1.2));
+    // Sound — punchier when it's our hit.
+    const vol = h.byOwner ? Math.min(1, 0.45 + h.damage * 0.04) : isSelfTarget ? 0.7 : 0.25;
+    snd.playWeaponHit(vol);
+    // Floating damage number.
+    this.spawnDamageNumber(h.x, h.y, h.damage, h.byOwner, isSelfTarget);
+    // Self took damage → keep the chromatic flash visual we already had.
+    if (isSelfTarget) {
+      this.hitFlashUntil = recvTime + 140;
+    }
+    // Owner-only camera kick. Random direction × magnitude, applied + decayed in tick.
+    if (h.byOwner) {
+      const mag = Math.min(10, 1.5 + h.damage * 0.18);
+      const ang = Math.random() * Math.PI * 2;
+      this.cameraKickX += Math.cos(ang) * mag;
+      this.cameraKickY += Math.sin(ang) * mag;
+      this.cameraKickUntil = recvTime + 140;
+    }
+  }
+
+  /** Project the floating damage numbers from world coords to screen coords each frame; reap expired ones. */
+  private updateDamageNumbers(now: number): void {
+    if (this.damageNumbers.length === 0) return;
+    const scale = this.world.scale.x || 1;
+    const lifeMs = 700;
+    const riseTotal = 38;
+    for (let i = this.damageNumbers.length - 1; i >= 0; i--) {
+      const d = this.damageNumbers[i]!;
+      const age = now - d.spawnAt;
+      if (age >= lifeMs) {
+        d.el.remove();
+        this.damageNumbers.splice(i, 1);
+        continue;
+      }
+      const t = age / lifeMs;
+      const sx = this.world.x + d.worldX * scale;
+      const sy = this.world.y + d.worldY * scale - riseTotal * t;
+      d.el.style.transform = `translate(calc(${sx}px + var(--jitter, 0px)), ${sy}px)`;
+      d.el.style.opacity = String(1 - t * t);
+    }
+  }
+
+  private spawnDamageNumber(worldX: number, worldY: number, damage: number, byOwner: boolean, isSelf: boolean): void {
+    if (!this.damageLayer) return;
+    const el = document.createElement("div");
+    el.className = "damage-number";
+    if (byOwner) el.classList.add("owner");
+    if (isSelf) el.classList.add("self");
+    el.textContent = String(Math.max(1, Math.round(damage)));
+    // Slight horizontal jitter so multiple hits don't overlap.
+    el.style.setProperty("--jitter", `${Math.round((Math.random() - 0.5) * 20)}px`);
+    this.damageLayer.appendChild(el);
+    this.damageNumbers.push({ el, worldX, worldY, spawnAt: performance.now() });
   }
 
   private handleEntityRemoved(id: number): void {
@@ -448,8 +580,6 @@ export class ArenaScene {
         nextX: you.x, nextY: you.y, nextTime: now,
         vx: 0, vy: 0,
         mass: you.mass,
-        hp: you.hp,
-        maxHp: you.maxHp,
         sprite,
       };
       this.fishes.set(key, f);
@@ -461,8 +591,6 @@ export class ArenaScene {
     f.nextY = you.y;
     f.nextTime = now + INTERP_DELAY_MS;
     f.mass = you.mass;
-    f.hp = you.hp;
-    f.maxHp = you.maxHp;
   }
 
   private applyFishDelta(ent: EntityDelta, recvTime: number): void {
@@ -484,8 +612,6 @@ export class ArenaScene {
         nextX: ent.x, nextY: ent.y, nextTime: now + INTERP_DELAY_MS,
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
         mass: ent.mass ?? 10,
-        hp: ent.hp ?? 20,
-        maxHp: ent.maxHp ?? 20,
         sprite,
       };
       this.fishes.set(ent.id, f);
@@ -500,8 +626,6 @@ export class ArenaScene {
     if (ent.vx !== undefined) f.vx = ent.vx;
     if (ent.vy !== undefined) f.vy = ent.vy;
     if (ent.mass !== undefined) f.mass = ent.mass;
-    if (ent.hp !== undefined) f.hp = ent.hp;
-    if (ent.maxHp !== undefined) f.maxHp = ent.maxHp;
     // The server re-sends name/color (treated as "first-seen" from its snapshot view)
     // when another player edits their identity. Reflect that into the sprite.
     let identityChanged = false;
@@ -637,8 +761,9 @@ export class ArenaScene {
       const y = f.prevY + (f.nextY - f.prevY) * t;
       const vx = (f.nextX - f.prevX) / (span / 1000);
       const vy = (f.nextY - f.prevY) / (span / 1000);
-      f.sprite.setTransform(x, y, vx, vy);
-      f.sprite.update(f.mass, f.hp, f.maxHp, dt);
+      const serverHeading = this.fishHeading.get(f.id);
+      f.sprite.setTransform(x, y, vx, vy, serverHeading, dt);
+      f.sprite.update(f.mass, dt);
     }
     fishSpan.end();
 
@@ -687,6 +812,21 @@ export class ArenaScene {
       this.updateSpectatorCamera(dt, screenW, screenH);
     }
 
+    // Camera kick: short jolt on owner hits, decays toward zero quickly.
+    if (this.cameraKickX !== 0 || this.cameraKickY !== 0) {
+      this.world.x += this.cameraKickX;
+      this.world.y += this.cameraKickY;
+      const kickDecay = Math.pow(0.0001, dt);
+      this.cameraKickX *= kickDecay;
+      this.cameraKickY *= kickDecay;
+      if (Math.abs(this.cameraKickX) < 0.05 && Math.abs(this.cameraKickY) < 0.05) {
+        this.cameraKickX = 0;
+        this.cameraKickY = 0;
+      }
+    }
+
+    this.updateDamageNumbers(now);
+
     this.updateMouthIndicators();
 
     const bgSpan = perf.begin("background");
@@ -718,7 +858,8 @@ export class ArenaScene {
       }
     }
     this.updateHud();
-    this.updateWeaponsHud(now);
+    this.updateSkillsHud(now);
+    this.updateLabelScales();
 
     perf.setCount("fish", this.fishes.size);
     perf.setCount("pellets", this.pellets.size);
@@ -727,34 +868,81 @@ export class ArenaScene {
     perf.frame();
   };
 
-  private updateWeaponsHud(now: number): void {
-    const slots = this.hud.weaponSlots;
+  private updateSkillsHud(now: number): void {
+    const slots = this.hud.skillSlots;
     const serverNow = Date.now() + this.clientServerOffset;
+    const wpnCount = this.youWeapons.length;
+    const pickPending = this.youPendingPicks > 0;
+    const dismissed = this.levelUpMount?.isDismissed() ?? false;
+    this.hud.skillHint.classList.toggle("hidden", !(pickPending && dismissed));
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i]!;
-      const wpn = this.youWeapons[i];
-      if (!wpn) {
+      if (i < wpnCount) {
+        const wpn = this.youWeapons[i]!;
+        const def = WEAPONS[wpn.id as keyof typeof WEAPONS];
+        slot.root.classList.remove("empty");
+        slot.root.classList.remove("actionable");
+        if (!def) {
+          slot.icon.textContent = "?";
+          slot.icon.style.color = "";
+          slot.label.textContent = "";
+          slot.cooldown.style.background = "transparent";
+          continue;
+        }
+        slot.icon.textContent = weaponGlyph(wpn.id);
+        slot.icon.style.color = weaponColor(wpn.id);
+        slot.label.textContent = isEvolutionWeapon(wpn.id as any) ? "E" : `L${wpn.level}`;
+        const lvl = getWeaponLevel(wpn.id as any, wpn.level);
+        const cd = lvl.cooldownMs > 0 ? lvl.cooldownMs : 0;
+        // Clockwise clock-wipe overlay starting at 12 o'clock. pct = fraction of
+        // cooldown remaining (1 = just fired, 0 = ready). Continuous weapons
+        // (cooldownMs === 0) skip the overlay entirely.
+        if (cd > 0) {
+          const remaining = Math.max(0, wpn.cooldownReadyAt - serverNow);
+          const pct = Math.max(0, Math.min(1, remaining / cd));
+          if (pct > 0) {
+            const angle = pct * 360;
+            slot.cooldown.style.background =
+              `conic-gradient(from -90deg, rgba(0,0,0,0.65) ${angle}deg, transparent ${angle}deg)`;
+          } else {
+            slot.cooldown.style.background = "transparent";
+          }
+        } else {
+          slot.cooldown.style.background = "transparent";
+        }
+        continue;
+      }
+      const p = this.youPassives[i - wpnCount];
+      if (!p) {
         slot.root.classList.add("empty");
+        slot.root.classList.toggle("actionable", pickPending);
         slot.icon.textContent = "";
-        slot.level.textContent = "";
-        slot.cooldown.style.transform = `scale(0)`;
+        slot.icon.style.color = "";
+        slot.label.textContent = "";
+        slot.cooldown.style.background = "transparent";
         continue;
       }
       slot.root.classList.remove("empty");
-      const def = WEAPONS[wpn.id as keyof typeof WEAPONS];
+      slot.root.classList.remove("actionable");
+      const def = PASSIVES[p.id as PassiveId];
+      slot.cooldown.style.background = "transparent";
       if (!def) {
         slot.icon.textContent = "?";
-        slot.level.textContent = "";
+        slot.icon.style.color = "";
+        slot.label.textContent = "";
         continue;
       }
-      slot.icon.textContent = weaponGlyph(wpn.id);
-      slot.icon.style.color = weaponColor(wpn.id);
-      slot.level.textContent = `L${wpn.level}`;
-      const lvl = getWeaponLevel(wpn.id as any, wpn.level);
-      const cd = lvl.cooldownMs > 0 ? lvl.cooldownMs : 1;
-      const remaining = Math.max(0, wpn.cooldownReadyAt - serverNow);
-      const pct = Math.max(0, Math.min(1, remaining / cd));
-      slot.cooldown.style.transform = `scale(${pct})`;
+      slot.icon.textContent = passiveGlyph(p.id);
+      slot.icon.style.color = passiveColor(p.id);
+      slot.label.textContent = `${p.stack}/${def.maxStack}`;
+    }
+  }
+
+  /** Keep fish name labels at >= 14px on-screen regardless of zoom. */
+  private updateLabelScales(): void {
+    const ws = this.world.scale.x || 1;
+    for (const f of this.fishes.values()) {
+      f.sprite.setLabelMinPxScale(ws);
     }
   }
 
@@ -813,7 +1001,6 @@ export class ArenaScene {
     this.unbindSpectatorKeys();
     this.stopSpectatorHeartbeat();
     this.prevYouMass = -1;
-    this.prevYouHp = -1;
     this.prevBoostReadyAt = 0;
     this.hud.root.style.display = "";
     if (this.inputInterval === null) this.startInputLoop();
@@ -1051,14 +1238,21 @@ export class ArenaScene {
     this.hud.root.remove();
     this.toastHud.teardown();
     this.rosterHud.teardown();
+    if (this.damageLayer) {
+      this.damageLayer.remove();
+      this.damageLayer = null;
+    }
+    this.damageNumbers.length = 0;
     this.scoreboardHud.teardown();
+    this.skillPanel?.teardown();
+    this.skillPanel = null;
   }
 }
 
-interface WeaponSlotEl {
+interface SkillSlotEl {
   root: HTMLElement;
   icon: HTMLElement;
-  level: HTMLElement;
+  label: HTMLElement;
   cooldown: HTMLElement;
 }
 
@@ -1069,7 +1263,8 @@ interface HudElements {
   players: HTMLElement;
   xpFill: HTMLElement;
   boost: HTMLElement;
-  weaponSlots: WeaponSlotEl[];
+  skillSlots: SkillSlotEl[];
+  skillHint: HTMLButtonElement;
   gear: HTMLElement;
 }
 
@@ -1090,24 +1285,27 @@ function mountHud(): HudElements {
         <button class="hud-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
       </div>
     </div>
-    <div class="hud-weapons" data-weapons>
-      ${[0,1,2,3].map(() => `
-        <div class="weapon-pip empty">
-          <div class="weapon-pip-cooldown"></div>
-          <div class="weapon-pip-icon"></div>
-          <div class="weapon-pip-level"></div>
-        </div>
-      `).join("")}
+    <div class="hud-skills" data-skills>
+      <div class="hud-skill-row" data-skill-row>
+        ${[0,1,2,3,4].map(() => `
+          <div class="skill-pip empty" type="button">
+            <div class="skill-pip-cooldown"></div>
+            <div class="skill-pip-icon"></div>
+            <div class="skill-pip-label"></div>
+          </div>
+        `).join("")}
+      </div>
+      <button class="hud-skill-hint hidden" type="button" data-skill-hint>Choose a skill (Esc)</button>
     </div>
     <div class="boost-indicator ready" data-boost>BOOST [Space]</div>
     <div class="xp-bar"><div class="xp-bar-fill" data-xp></div></div>
   `;
   document.body.appendChild(root);
-  const slots: WeaponSlotEl[] = Array.from(root.querySelectorAll(".weapon-pip")).map((el) => ({
+  const skillSlots: SkillSlotEl[] = Array.from(root.querySelectorAll(".skill-pip")).map((el) => ({
     root: el as HTMLElement,
-    icon: el.querySelector(".weapon-pip-icon") as HTMLElement,
-    level: el.querySelector(".weapon-pip-level") as HTMLElement,
-    cooldown: el.querySelector(".weapon-pip-cooldown") as HTMLElement,
+    icon: el.querySelector(".skill-pip-icon") as HTMLElement,
+    label: el.querySelector(".skill-pip-label") as HTMLElement,
+    cooldown: el.querySelector(".skill-pip-cooldown") as HTMLElement,
   }));
   return {
     root,
@@ -1116,9 +1314,17 @@ function mountHud(): HudElements {
     players: root.querySelector("[data-players]") as HTMLElement,
     xpFill: root.querySelector("[data-xp]") as HTMLElement,
     boost: root.querySelector("[data-boost]") as HTMLElement,
-    weaponSlots: slots,
+    skillSlots,
+    skillHint: root.querySelector("[data-skill-hint]") as HTMLButtonElement,
     gear: root.querySelector("[data-gear]") as HTMLElement,
   };
+}
+
+function mountDamageLayer(): HTMLDivElement {
+  const layer = document.createElement("div");
+  layer.className = "damage-layer";
+  document.body.appendChild(layer);
+  return layer;
 }
 
 function weaponGlyph(id: string): string {
@@ -1134,6 +1340,34 @@ function weaponGlyph(id: string): string {
     case "kraken":  return "✦";
     case "school":  return "◤";
     default:        return "?";
+  }
+}
+
+function passiveGlyph(id: string): string {
+  switch (id) {
+    case "fin":      return "↯";
+    case "gulp":     return "★";
+    case "scales":   return "❖";
+    case "teeth":    return "▲";
+    case "reflex":   return "↻";
+    case "magnet":   return "◎";
+    case "recovery": return "+";
+    case "hungry":   return "◆";
+    default:         return "?";
+  }
+}
+
+function passiveColor(id: string): string {
+  switch (id) {
+    case "fin":      return "#7fffa1";
+    case "gulp":     return "#ffe884";
+    case "scales":   return "#9ad8ff";
+    case "teeth":    return "#ff9070";
+    case "reflex":   return "#b6ecff";
+    case "magnet":   return "#bf94e6";
+    case "recovery": return "#ff7ba7";
+    case "hungry":   return "#ffcb70";
+    default:         return "#ffffff";
   }
 }
 

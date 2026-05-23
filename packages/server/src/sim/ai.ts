@@ -1,4 +1,4 @@
-import { AI, ARENA, fishHp, canEat, massSpeedMult } from "@fcf/shared";
+import { AI, ARENA, canEat, massSpeedMult } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
 
@@ -15,6 +15,18 @@ const AI_COLORS = [
 
 function pick<T>(arr: readonly T[], rng: () => number): T {
   return arr[Math.floor(rng() * arr.length)]!;
+}
+
+/**
+ * Panic-speed lerp: linear interpolation from fleePanicSpeed to fleeSpeed over
+ * fleePanicDurationMs. After that, sustained fleeSpeed. Called by both the
+ * "predator visible" and "still committed but lost sight" flee branches so
+ * they share the same speed curve.
+ */
+function fleeSpeedAt(elapsedMs: number): number {
+  if (elapsedMs >= AI.fleePanicDurationMs) return AI.fleeSpeed;
+  const t = Math.max(0, elapsedMs) / AI.fleePanicDurationMs;
+  return AI.fleePanicSpeed + (AI.fleeSpeed - AI.fleePanicSpeed) * t;
 }
 
 export function spawnAiFish(world: World, mass?: number): Fish {
@@ -36,8 +48,6 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     headingX: 1,
     headingY: 0,
     mass: m,
-    hp: fishHp(m),
-    maxHp: fishHp(m),
     color: pick(AI_COLORS, rng),
     name: pick(AI_NAMES, rng),
     isAi: true,
@@ -47,6 +57,9 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     level: 1,
     xp: 0,
     kills: 0,
+    peakMass: m,
+    hits: 0,
+    damageDealt: 0,
     spawnedAt: now,
     socketId: null,
     alive: true,
@@ -61,10 +74,17 @@ export function spawnAiFish(world: World, mass?: number): Fish {
       lastSampleAt: now,
       stuckSince: null,
       blacklist: new Map(),
+      fleeStartedAt: 0,
+      fleeLastKnownX: 0,
+      fleeLastKnownY: 0,
+      fleeMemoryUntil: 0,
     },
     weapons: [],
     passives: new Map(),
     pendingLevelUp: [],
+    queuedLevelUps: 0,
+    levelUpDismissed: false,
+    pendingLevelUpDrawId: 0,
   };
   return fish;
 }
@@ -119,6 +139,7 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   }
 
   if (now >= state.modeUntil) {
+    const wasFleeing = state.mode === "flee";
     state.mode = "wander";
     state.modeUntil = now + 1500 + rng() * 2500;
     const repulseR = AI.wallRepulseRadius;
@@ -131,6 +152,16 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
       const dxCenter = ARENA.width / 2 - fish.x;
       const dyCenter = ARENA.height / 2 - fish.y;
       state.wanderHeading = Math.atan2(dyCenter, dxCenter) + (rng() - 0.5) * 1.2;
+    } else if (wasFleeing && now < state.fleeMemoryUntil) {
+      // Just stopped fleeing — point away from where we last saw the predator
+      // so the fish doesn't immediately drift back into the danger zone.
+      const dx = fish.x - state.fleeLastKnownX;
+      const dy = fish.y - state.fleeLastKnownY;
+      if (dx * dx + dy * dy > 1e-6) {
+        state.wanderHeading = Math.atan2(dy, dx) + (rng() - 0.5) * 0.4;
+      } else {
+        state.wanderHeading += (rng() - 0.5) * 1.2;
+      }
     } else {
       state.wanderHeading += (rng() - 0.5) * 1.2;
     }
@@ -168,7 +199,7 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
       const dy = t.y - fish.y;
       const d2 = dx * dx + dy * dy;
       if (d2 <= sightR2) {
-        if (canEat(t.mass, fish.mass)) {
+        if (t.mass >= fish.mass * AI.threatRatio) {
           currentPredator = t;
           currentPredatorD2 = d2;
         } else if (canEat(fish.mass, t.mass)) {
@@ -191,7 +222,7 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     const dy = other.y - fish.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > sightR2) continue;
-    if (canEat(other.mass, fish.mass)) {
+    if (other.mass >= fish.mass * AI.threatRatio) {
       if (d2 < predatorDist) {
         predatorDist = d2;
         nearestPredator = other;
@@ -224,18 +255,36 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   let tvy = Math.sin(state.wanderHeading);
 
   if (chosenPredator) {
+    const wasFleeing = state.mode === "flee";
     if (state.targetId !== chosenPredator.id) {
       state.targetId = chosenPredator.id;
       state.targetSince = now;
     }
     state.mode = "flee";
-    state.modeUntil = now + 1500;
+    if (!wasFleeing) state.fleeStartedAt = now;
+    // Refresh commitment + memory each tick while predator is in sight; the
+    // commitment window only counts down once the predator leaves the sight
+    // radius.
+    state.modeUntil = now + AI.fleeMinDurationMs;
+    state.fleeLastKnownX = chosenPredator.x;
+    state.fleeLastKnownY = chosenPredator.y;
+    state.fleeMemoryUntil = now + AI.fleeMinDurationMs + AI.fleeMemoryMs;
     const dx = fish.x - chosenPredator.x;
     const dy = fish.y - chosenPredator.y;
     const len = Math.hypot(dx, dy) || 1;
     tvx = dx / len;
     tvy = dy / len;
-    speed = AI.fleeSpeed;
+    speed = fleeSpeedAt(now - state.fleeStartedAt);
+  } else if (state.mode === "flee" && now < state.modeUntil) {
+    // Predator slipped out of sight but the commitment window hasn't elapsed.
+    // Keep running away from the last-known position so the fish doesn't
+    // immediately turn back the moment the predator hits the sight boundary.
+    const dx = fish.x - state.fleeLastKnownX;
+    const dy = fish.y - state.fleeLastKnownY;
+    const len = Math.hypot(dx, dy) || 1;
+    tvx = dx / len;
+    tvy = dy / len;
+    speed = fleeSpeedAt(now - state.fleeStartedAt);
   } else if (chosenPrey) {
     if (state.targetId !== chosenPrey.id) {
       state.targetId = chosenPrey.id;

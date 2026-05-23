@@ -10,13 +10,13 @@ Feature: Death screen
   Scenario: Eaten message brings up the death screen with killer name
     When the server sends an eaten message from "Megafish"
     Then the death screen reports being eaten by "Megafish"
-    And the death screen shows final mass 50
+    And the death screen shows peak mass 60
 
   Scenario: Leaderboard is rendered on the death screen
     When the server sends a leaderboard with entries:
-      | name | color   | finalMass | level |
-      | Top  | #ff85a1 | 999       | 9     |
-      | Mid  | #7fcfff | 100       | 3     |
+      | name | color   | kills | peakMass | hits | damage | level |
+      | Top  | #ff85a1 | 30    | 999      | 500  | 5000   | 9     |
+      | Mid  | #7fcfff | 5     | 100      | 60   | 400    | 3     |
     And the server sends an eaten message
     Then the death screen shows 2 leaderboard rows
     And the leaderboard's top row shows "Top"

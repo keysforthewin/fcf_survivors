@@ -1,12 +1,5 @@
 import type { LeaderboardEntry } from "@fcf/shared";
-import { WEAPONS } from "@fcf/shared";
-
-type SortKey = "mass" | "recent" | "kills";
-const SORT_LABEL: Record<SortKey, string> = {
-  mass: "TOP MASS",
-  recent: "RECENT",
-  kills: "MOST KILLS",
-};
+import { type SortKey, SORT_KEYS, SORT_LABEL, renderLeaderboardRows, fetchLeaderboard } from "./leaderboard-view.ts";
 
 const CACHE_TTL_MS = 5000;
 
@@ -29,7 +22,7 @@ export function mountScoreboardHud(): ScoreboardHud {
         <span class="scoreboard-hint">F2 to close</span>
       </div>
       <div class="leaderboard-tabs">
-        ${(["mass","recent","kills"] as SortKey[]).map((k, i) => `
+        ${SORT_KEYS.map((k, i) => `
           <button type="button" class="leaderboard-tab${i === 0 ? " active" : ""}" data-sort="${k}">${SORT_LABEL[k]}</button>
         `).join("")}
       </div>
@@ -44,14 +37,14 @@ export function mountScoreboardHud(): ScoreboardHud {
   const tabs = Array.from(root.querySelectorAll(".leaderboard-tab")) as HTMLElement[];
 
   let visible = false;
-  let currentSort: SortKey = "mass";
+  let currentSort: SortKey = "kills";
   let cache: { sort: SortKey; rows: LeaderboardEntry[]; at: number } | null = null;
   let inFlight: { sort: SortKey; promise: Promise<LeaderboardEntry[]> } | null = null;
 
   async function load(sort: SortKey, force = false): Promise<void> {
     const now = performance.now();
     if (!force && cache && cache.sort === sort && now - cache.at < CACHE_TTL_MS) {
-      renderRows(listEl, cache.rows);
+      renderLeaderboardRows(listEl, cache.rows, sort);
       return;
     }
     if (inFlight && inFlight.sort === sort) {
@@ -64,7 +57,7 @@ export function mountScoreboardHud(): ScoreboardHud {
     try {
       const rows = await promise;
       cache = { sort, rows, at: performance.now() };
-      if (visible && currentSort === sort) renderRows(listEl, rows);
+      if (visible && currentSort === sort) renderLeaderboardRows(listEl, rows, sort);
     } catch {
       // best-effort — leave previous content
     } finally {
@@ -117,34 +110,3 @@ export function mountScoreboardHud(): ScoreboardHud {
   return api;
 }
 
-async function fetchLeaderboard(sort: SortKey): Promise<LeaderboardEntry[]> {
-  const res = await fetch(`/leaderboard?sort=${sort}`);
-  if (!res.ok) return [];
-  return await res.json();
-}
-
-function renderRows(el: HTMLElement, rows: LeaderboardEntry[]): void {
-  if (rows.length === 0) {
-    el.innerHTML = `<div class="leaderboard-row"><span class="leaderboard-name" style="color:var(--muted)">No runs yet.</span></div>`;
-    return;
-  }
-  el.innerHTML = rows.slice(0, 10).map((row, i) => `
-    <div class="leaderboard-row">
-      <span class="leaderboard-rank">#${i + 1}</span>
-      <span class="leaderboard-name">
-        <span class="leaderboard-dot" style="background:${escapeHtml(row.color)}"></span>
-        ${escapeHtml(row.name)}
-        ${row.evolution ? `<span class="leaderboard-evo">${escapeHtml(WEAPONS[row.evolution as keyof typeof WEAPONS]?.name ?? row.evolution)}</span>` : ""}
-      </span>
-      <span class="leaderboard-mass">${Math.floor(row.finalMass)}</span>
-    </div>
-  `).join("");
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}

@@ -1,5 +1,5 @@
 import {
-  WEAPONS, MAX_WEAPONS, MAX_WEAPON_LEVEL,
+  WEAPONS, MAX_WEAPON_LEVEL, MAX_SLOTS,
   PASSIVES, PASSIVE_IDS,
   EVOLUTIONS, BASE_WEAPONS,
   xpForLevel, serializeCardId,
@@ -7,25 +7,74 @@ import {
 import type { LevelUpCard, ParsedCardId, WeaponId, PassiveId } from "@fcf/shared";
 import type { Fish, WeaponSlot } from "./entity.ts";
 import type { World } from "./world.ts";
-import { getMaxHp } from "./passives.ts";
 
 /**
- * For each living player fish with no modal pending and enough XP, queue a level-up
- * (spend xp, increment level, refresh hp). Card pickup happens via `applyCard` when
- * the client returns a `pickCard` message.
+ * For each living player fish, keep promoting while XP threshold is reached.
+ * The FIRST level-up populates `pendingLevelUp` with a fresh draw; subsequent
+ * levels reached while a pick is already active accumulate on `queuedLevelUps`
+ * and get drawn on demand when the active pick is applied. Levels still tick
+ * up continuously — there is no longer a global gate that stalls promotion
+ * because the player hasn't responded to the modal.
  */
 export function processLevelUps(world: World): void {
   for (const fish of world.fish.values()) {
     if (!fish.alive || fish.isAi) continue;
-    if (fish.pendingLevelUp.length > 0) continue;
-    if (fish.xp < xpForLevel(fish.level)) continue;
-
-    fish.xp -= xpForLevel(fish.level);
-    fish.level += 1;
-    fish.maxHp = getMaxHp(fish);
-    fish.hp = fish.maxHp;
-    fish.pendingLevelUp = drawCards(fish, world.rng);
+    while (fish.xp >= xpForLevel(fish.level)) {
+      fish.xp -= xpForLevel(fish.level);
+      fish.level += 1;
+      // Suppress card draw when every slot is full and fully upgraded — level
+      // still ticks up, just no pick is offered.
+      if (!canOfferAnyCard(fish)) continue;
+      if (fish.pendingLevelUp.length === 0) {
+        fish.pendingLevelUp = drawCards(fish, world.rng);
+        fish.pendingLevelUpDrawId += 1;
+        // A first-from-empty draw opens the modal; if the player had dismissed
+        // a prior pick that was already consumed, this gives them a fresh chance.
+        fish.levelUpDismissed = false;
+      } else {
+        // Already have an active pick — queue this one. Cards are drawn JIT in
+        // applyCard so they reflect the post-pick loadout, avoiding stale options.
+        fish.queuedLevelUps += 1;
+      }
+    }
   }
+}
+
+/** True if drawCards would have anything to offer this fish. */
+export function canOfferAnyCard(fish: Fish): boolean {
+  // upgradeable owned weapon
+  for (const slot of fish.weapons) {
+    if (slot.level >= MAX_WEAPON_LEVEL) continue;
+    if (BASE_WEAPONS.includes(slot.id) || EVOLUTIONS[slot.id] !== undefined) return true;
+  }
+  const slotsUsed = fish.weapons.length + fish.passives.size;
+  const hasFreeSlot = slotsUsed < MAX_SLOTS;
+  // unowned base weapon with room
+  if (hasFreeSlot) {
+    for (const id of BASE_WEAPONS) {
+      if (!fish.weapons.some((s) => s.id === id)) return true;
+    }
+  }
+  // stack an existing passive
+  for (const [id, stack] of fish.passives) {
+    if (stack < PASSIVES[id].maxStack) return true;
+  }
+  // start a new passive (slot available + at least one untaken passive)
+  if (hasFreeSlot) {
+    for (const id of PASSIVE_IDS) {
+      if (!fish.passives.has(id)) return true;
+    }
+  }
+  // an evolution is unlockable right now
+  for (const slot of fish.weapons) {
+    if (slot.level < MAX_WEAPON_LEVEL) continue;
+    const evo = EVOLUTIONS[slot.id];
+    if (!evo) continue;
+    if ((fish.passives.get(evo.passive) ?? 0) < PASSIVES[evo.passive].maxStack) continue;
+    if (fish.weapons.some((s) => s.id === evo.evolutionId)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Build a 3-card draw for `fish` honoring evolution forcing. */
@@ -55,24 +104,27 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
     pool.push({ card: makeUpgradeCard(slot.id, slot.level + 1), weight: 2 });
   }
 
-  // Add unowned base weapons if room
-  if (fish.weapons.length < MAX_WEAPONS) {
+  // Add unowned base weapons if there's a free slot (shared with passives).
+  const hasFreeSlot = fish.weapons.length + fish.passives.size < MAX_SLOTS;
+  if (hasFreeSlot) {
     for (const id of BASE_WEAPONS) {
       if (fish.weapons.some((s) => s.id === id)) continue;
       pool.push({ card: makeAddCard(id), weight: 3 });
     }
   }
 
-  // Stack passives
+  // Stack passives — owned ones can always level. New passives only if a slot is free.
   for (const id of PASSIVE_IDS) {
+    const owned = fish.passives.has(id);
     const current = fish.passives.get(id) ?? 0;
     if (current >= PASSIVES[id].maxStack) continue;
+    if (!owned && !hasFreeSlot) continue;
     pool.push({ card: makeStackCard(id, current + 1), weight: 1 });
   }
 
-  // 3. Assemble the 3-card result.
-  const result: LevelUpCard[] = [];
-  if (forced.length > 0) result.push(forced[0]!);
+  // 3. Assemble the 3-card result. Every eligible evolution is offered first
+  //    (they take priority over the random pool); slice guards the 3-card cap.
+  const result: LevelUpCard[] = forced.slice(0, 3);
 
   while (result.length < 3 && pool.length > 0) {
     const remaining = pool.filter((w) => !result.some((c) => c.id === w.card.id));
@@ -142,7 +194,7 @@ export function applyCard(world: World, fish: Fish, cardId: string, parsed: Pars
 
   switch (parsed.kind) {
     case "weapon-add": {
-      if (fish.weapons.length >= MAX_WEAPONS) return false;
+      if (fish.weapons.length + fish.passives.size >= MAX_SLOTS) return false;
       if (fish.weapons.some((s) => s.id === parsed.weaponId)) return false;
       fish.weapons.push({ id: parsed.weaponId, level: 1, cooldownReadyAt: world.now() + 400 });
       break;
@@ -157,12 +209,11 @@ export function applyCard(world: World, fish: Fish, cardId: string, parsed: Pars
     }
     case "passive-stack": {
       const max = PASSIVES[parsed.passiveId].maxStack;
+      const owned = fish.passives.has(parsed.passiveId);
       const current = fish.passives.get(parsed.passiveId) ?? 0;
       if (current >= max) return false;
+      if (!owned && fish.weapons.length + fish.passives.size >= MAX_SLOTS) return false;
       fish.passives.set(parsed.passiveId, parsed.stack);
-      // Hearty Scales / Recovery may have changed maxHp; refresh.
-      fish.maxHp = getMaxHp(fish);
-      if (fish.hp > fish.maxHp) fish.hp = fish.maxHp;
       break;
     }
     case "evolution": {
@@ -179,10 +230,22 @@ export function applyCard(world: World, fish: Fish, cardId: string, parsed: Pars
   }
 
   fish.pendingLevelUp = [];
+  // Draw the next queued pick (if any) with cards based on the just-updated
+  // loadout. Preserves levelUpDismissed so the player isn't yanked back into
+  // the modal mid-game; they can ESC to see the next set whenever they choose.
+  if (fish.queuedLevelUps > 0) {
+    fish.queuedLevelUps -= 1;
+    if (canOfferAnyCard(fish)) {
+      fish.pendingLevelUp = drawCards(fish, world.rng);
+      fish.pendingLevelUpDrawId += 1;
+    }
+  } else {
+    fish.levelUpDismissed = false;
+  }
   return true;
 }
 
-function cleanupSlotOrbitalProjectiles(world: World, slot: WeaponSlot): void {
+export function cleanupSlotOrbitalProjectiles(world: World, slot: WeaponSlot): void {
   if (!slot.state || slot.state.kind !== "orbital") return;
   for (const pid of slot.state.projectileIds) {
     if (world.projectiles.has(pid)) world.removeProjectile(pid);

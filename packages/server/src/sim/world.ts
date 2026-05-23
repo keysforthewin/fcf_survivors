@@ -1,10 +1,10 @@
-import { ARENA, FISH, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishHp, fishRadius } from "@fcf/shared";
+import { AI, ARENA, FISH, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
-import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior } from "./entity.ts";
+import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior, HitEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
 import { maintainAiPopulation, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage } from "./weapon.ts";
-import { getMoveSpeed, getBoostCooldown, getMaxHp, getPickupRadius, getPelletXp, getFishEatMass } from "./passives.ts";
+import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass } from "./passives.ts";
 
 const MAX_PROJECTILES = 400;
 
@@ -29,6 +29,8 @@ export class World {
   chunks = new Map<number, Chunk>();
   projectiles = new Map<number, Projectile>();
   removedIds: number[] = [];
+  /** Hit events that occurred during the current tick. Drained by snapshot builder. */
+  hitEvents: HitEventRecord[] = [];
 
   private idCounter = 1;
   tick = 0;
@@ -70,8 +72,6 @@ export class World {
       headingX: 1,
       headingY: 0,
       mass: FISH.startMass,
-      hp: fishHp(FISH.startMass),
-      maxHp: fishHp(FISH.startMass),
       color,
       name,
       isAi: false,
@@ -81,6 +81,9 @@ export class World {
       level: 1,
       xp: 0,
       kills: 0,
+      peakMass: FISH.startMass,
+      hits: 0,
+      damageDealt: 0,
       spawnedAt: this.now(),
       socketId,
       alive: true,
@@ -89,6 +92,9 @@ export class World {
       ],
       passives: new Map(),
       pendingLevelUp: [],
+      queuedLevelUps: 0,
+      levelUpDismissed: false,
+      pendingLevelUpDrawId: 0,
     };
     this.fish.set(fish.id, fish);
     return fish;
@@ -191,9 +197,13 @@ export class World {
     return c;
   }
 
-  /** Apply input to a player fish. While a level-up modal is open the fish brakes to zero. */
+  /**
+   * Apply input to a player fish. While a level-up modal is open AND the player
+   * has not dismissed it, the fish brakes to zero so the player can't move
+   * while choosing. Dismissing the modal (ESC / skip button) lifts the freeze.
+   */
   applyInput(fish: Fish, vx: number, vy: number, boost: boolean, now: number): void {
-    if (fish.pendingLevelUp.length > 0) {
+    if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) {
       fish.targetVx = 0;
       fish.targetVy = 0;
       return;
@@ -241,11 +251,15 @@ export class World {
       }
       f.x += f.vx * dtSec;
       f.y += f.vy * dtSec;
-      // update remembered heading from velocity when moving — used to aim weapons when idle
+      // Rate-limited heading: rotate current heading toward the velocity direction at
+      // most maxTurnRate * dt per tick. AI fish use a slower rate so they visibly arc
+      // through direction changes instead of snapping.
       const vmag = Math.hypot(f.vx, f.vy);
       if (vmag > 5) {
-        f.headingX = f.vx / vmag;
-        f.headingY = f.vy / vmag;
+        const maxRad = (f.isAi ? AI.maxTurnRateRadPerSec : FISH.maxTurnRateRadPerSec) * dtSec;
+        const [nhx, nhy] = rotateHeadingToward(f.headingX, f.headingY, f.vx, f.vy, maxRad);
+        f.headingX = nhx;
+        f.headingY = nhy;
       }
       // clamp to arena
       const r = fishRadius(f.mass);
@@ -305,9 +319,8 @@ export class World {
         if (dx * dx + dy * dy <= pickupR * pickupR) {
           this.removePellet(p.id);
           f.mass += PELLET.massGain;
+          f.mass = Math.min(f.mass, massCapFor(f.isAi));
           f.xp += f.isAi ? 1 : getPelletXp(1, f);
-          f.maxHp = f.isAi ? fishHp(f.mass) : getMaxHp(f);
-          f.hp = Math.min(f.maxHp, f.hp + 1);
         }
       }
     }
@@ -324,9 +337,8 @@ export class World {
         if (dx * dx + dy * dy <= r * r) {
           this.removeChunk(c.id);
           f.mass += c.mass * (1 - FISH.massTaxOnEat);
+          f.mass = Math.min(f.mass, massCapFor(f.isAi));
           f.xp += Math.max(1, Math.floor(c.mass * 0.5));
-          f.maxHp = f.isAi ? fishHp(f.mass) : getMaxHp(f);
-          f.hp = Math.min(f.maxHp, f.hp + c.mass);
         }
       }
     }
@@ -391,13 +403,26 @@ export class World {
         // a eats b
         const baseGain = b.mass * (1 - FISH.massTaxOnEat);
         a.mass += a.isAi ? baseGain : getFishEatMass(baseGain, a);
-        a.maxHp = a.isAi ? fishHp(a.mass) : getMaxHp(a);
-        a.hp = Math.min(a.maxHp, a.hp + b.mass * 0.5);
+        a.mass = Math.min(a.mass, massCapFor(a.isAi));
         a.kills += 1;
-        a.xp += Math.max(5, Math.floor(b.mass * 1.5));
+        // XP awarded scales with the victim's level — eating a high-level fish is worth more.
+        a.xp += xpDroppedOnDeath(b.level, b.mass);
         b.alive = false;
         // mark b for removal at end of tick (handled by caller)
       }
+    }
+
+    // baseline mass decay for player fish — applied at end of tick so it
+    // doesn't shave a predator below the canEat boundary mid-tick. Scales
+    // linearly with current mass. AI fish are intentionally exempt so the
+    // spawn economy still works.
+    for (const f of this.fish.values()) {
+      if (!f.alive) continue;
+      // Record the high-water mark before decay shaves it back down. Captures
+      // this tick's eating/growth too (eating ran earlier in the step).
+      if (f.mass > f.peakMass) f.peakMass = f.mass;
+      if (f.isAi) continue;
+      f.mass = Math.max(FISH.startMass, f.mass - massDecayPerSec(f.mass) * dtSec);
     }
   }
 }

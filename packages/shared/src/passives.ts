@@ -4,7 +4,7 @@ export type PassiveId =
 export type PassiveEffect =
   | "moveSpeedMult"
   | "pelletXpMult"
-  | "maxHpMult"
+  | "damageTakenMult"
   | "weaponDmgMult"
   | "weaponCdMult"
   | "pickupMult"
@@ -31,8 +31,8 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
     maxStack: 5, perStack: 1.15, effect: "pelletXpMult",
   },
   scales: {
-    id: "scales",   name: "Hearty Scales",   description: "+20% max HP per stack.",
-    maxStack: 5, perStack: 1.20, effect: "maxHpMult",
+    id: "scales",   name: "Hearty Scales",   description: "-12% mass lost from hits per stack.",
+    maxStack: 5, perStack: 0.88, effect: "damageTakenMult",
   },
   teeth: {
     id: "teeth",    name: "Sharp Teeth",     description: "+15% weapon damage per stack.",
@@ -47,8 +47,8 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
     maxStack: 3, perStack: 1.50, effect: "pickupMult",
   },
   recovery: {
-    id: "recovery", name: "Boost Recovery",  description: "−10% boost cooldown per stack.",
-    maxStack: 4, perStack: 0.90, effect: "boostCdMult",
+    id: "recovery", name: "Boost Recovery",  description: "−20% boost cooldown per stack (max −80%).",
+    maxStack: 4, perStack: 0.80, effect: "boostCdMult",
   },
   hungry: {
     id: "hungry",   name: "Hungry Hungry",   description: "+5% mass per fish eaten per stack.",

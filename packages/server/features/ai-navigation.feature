@@ -18,7 +18,7 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
 
   Scenario: A stuck AI gives up its target and blacklists it
     Given an AI fish "Stuck" at (4000, 4000) with mass 100 in "chase" mode
-    And a player "Bait" at (4100, 4000) with mass 10
+    And a player "Bait" at (4200, 4000) with mass 10
     When "Stuck" is held at (4000, 4000) for 75 ticks
     Then "Stuck" has no target
     And "Stuck" is in "wander" mode
@@ -26,7 +26,7 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
 
   Scenario: A blacklisted target is ignored even when in sight
     Given an AI fish "Stuck" at (4000, 4000) with mass 100 in "chase" mode
-    And a player "Bait" at (4100, 4000) with mass 10
+    And a player "Bait" at (4200, 4000) with mass 10
     When "Stuck" is held at (4000, 4000) for 75 ticks
     Then "Stuck" has no target
     When the world advances 1 tick
@@ -70,3 +70,13 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
     And "NoTarget" has wander heading 3.14159
     When the world advances 100 ticks
     Then "NoTarget" is at least 300 units from the left wall
+
+  Scenario: AI fish heading rotates gradually instead of snapping
+    # AI.maxTurnRateRadPerSec = 3.5; over 5 ticks (0.25s) the heading
+    # cannot rotate more than ~0.875 rad even toward a 180° target.
+    Given an AI fish "Pivot" at (4000, 4000) with mass 30 in "wander" mode
+    And "Pivot" has heading (1, 0)
+    And "Pivot" has wander heading 3.14159
+    And baseline heading of "Pivot"
+    When the world advances 5 ticks
+    Then "Pivot" heading has rotated by at most 1.0 radians from baseline

@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Deploy Fruit Cup Survivors to a remote host via rsync + docker compose.
 # Config lives in .env (see .env.example).
+#
+# Usage:
+#   ./deploy.sh                     # build + sync + restart server (always resets in-memory world)
+#   ./deploy.sh --reset-map         # reset the live server's in-memory world (no build/sync)
+#   ./deploy.sh --reset-scores      # wipe ALL leaderboard scores on the remote (asks to confirm)
+#   ./deploy.sh --reset-scores-local # wipe leaderboard scores in your local dev mongo
+#   ./deploy.sh --print-nginx       # render the nginx vhost snippet to stdout
+#
+# The default deploy uses `--force-recreate --no-deps server`, which kills the
+# running server container and starts a fresh one. Mongo (and the leaderboard
+# it holds) is left untouched.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
@@ -60,6 +71,47 @@ ssh_remote() {
   ssh "${SSH_OPTS[@]}" "$DEPLOY_HOST" "$@"
 }
 
+# --- Restart command: force-recreate the server container to wipe in-memory world state.
+# Used by both `--reset-map` (reset-only) and the default deploy (build + sync + restart).
+RESET_SERVER_CMD="docker compose -f docker-compose.prod.yml up -d mongo && docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps server"
+
+# --- Subcommand: reset map only (skips build/sync) ---
+if [[ "${1:-}" == "--reset-map" || "${1:-}" == "reset-map" ]]; then
+  echo "==> Resetting map on $DEPLOY_HOST (force-recreating server container; mongo/leaderboard untouched)…"
+  ssh_remote "cd '$DEPLOY_DIR' && SERVER_PORT='$SERVER_PORT' MONGO_PORT='$MONGO_PORT' $RESET_SERVER_CMD"
+  echo "==> Map reset complete (no code redeployed)."
+  exit 0
+fi
+
+# --- Mongo db name (where the scores collection lives) ---
+: "${MONGO_DB:=fcf_survivors}"
+
+# --- Subcommand: wipe ALL leaderboard scores on the remote (destructive, asks first) ---
+if [[ "${1:-}" == "--reset-scores" || "${1:-}" == "reset-scores" ]]; then
+  echo "⚠️  This permanently deletes ALL leaderboard scores on $DEPLOY_HOST (db '$MONGO_DB', collection 'scores')."
+  read -r -p "Type 'y' to confirm: " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "==> Aborted; no scores were deleted."
+    exit 0
+  fi
+  echo "==> Wiping scores on $DEPLOY_HOST…"
+  ssh_remote "cd '$DEPLOY_DIR' && MONGO_PORT='$MONGO_PORT' docker compose -f docker-compose.prod.yml exec -T mongo \
+    mongosh --quiet --port '$MONGO_PORT' '$MONGO_DB' \
+    --eval 'print(db.scores.deleteMany({}).deletedCount + \" scores deleted\")'"
+  echo "==> Leaderboard reset complete."
+  exit 0
+fi
+
+# --- Subcommand: wipe scores in the LOCAL dev mongo (no prompt; dev data) ---
+if [[ "${1:-}" == "--reset-scores-local" || "${1:-}" == "reset-scores-local" ]]; then
+  echo "==> Wiping local dev scores (compose service 'mongo', db '$MONGO_DB')…"
+  docker compose exec -T mongo \
+    mongosh --quiet --port 27017 "$MONGO_DB" \
+    --eval 'print(db.scores.deleteMany({}).deletedCount + " scores deleted")'
+  echo "==> Local leaderboard reset complete."
+  exit 0
+fi
+
 # --- Build phase ---
 echo "==> Installing workspace deps (bun install)…"
 bun install
@@ -89,10 +141,13 @@ rsync -avz -e "$RSYNC_SSH_CMD" \
   "$DEPLOY_HOST:$DEPLOY_DIR/"
 
 # --- Restart phase ---
-DEFAULT_RESTART_CMD="docker compose -f docker-compose.prod.yml up -d mongo && docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps server"
-RESTART_CMD_TO_RUN="${RESTART_CMD:-$DEFAULT_RESTART_CMD}"
-echo "==> Restarting on remote (SERVER_PORT=$SERVER_PORT, MONGO_PORT=$MONGO_PORT)…"
-ssh_remote "cd '$DEPLOY_DIR' && SERVER_PORT='$SERVER_PORT' MONGO_PORT='$MONGO_PORT' $RESTART_CMD_TO_RUN"
+# Always force-recreate the server so the in-memory world is wiped — otherwise
+# clients can see ghost entities from the previous server process.
+if [[ -n "${RESTART_CMD:-}" ]]; then
+  echo "==> Warning: RESTART_CMD is set in your env but is ignored. Deploys always force-recreate the server." >&2
+fi
+echo "==> Restarting on remote (SERVER_PORT=$SERVER_PORT, MONGO_PORT=$MONGO_PORT; in-memory world will reset)…"
+ssh_remote "cd '$DEPLOY_DIR' && SERVER_PORT='$SERVER_PORT' MONGO_PORT='$MONGO_PORT' $RESET_SERVER_CMD"
 
 # --- Done ---
 if [[ -n "${PUBLIC_HOST:-}" ]]; then

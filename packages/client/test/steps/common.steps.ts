@@ -92,15 +92,23 @@ When(
   "the server sends a leaderboard with entries:",
   async ({ page }, table: { rawTable: string[][] }) => {
     const header = table.rawTable[0]!;
-    const iName = header.indexOf("name");
-    const iColor = header.indexOf("color");
-    const iMass = header.indexOf("finalMass");
-    const iLevel = header.indexOf("level");
+    const col = (n: string) => header.indexOf(n);
+    const iName = col("name");
+    const iColor = col("color");
+    const iKills = col("kills");
+    const iMass = col("peakMass");
+    const iHits = col("hits");
+    const iDamage = col("damage");
+    const iLevel = col("level");
+    const num = (r: string[], i: number) => (i >= 0 ? Number(r[i]!) : 0);
     const rows = table.rawTable.slice(1).map((r) => ({
       name: r[iName]!,
       color: r[iColor] ?? "#7fcfff",
-      finalMass: Number(r[iMass]!),
-      level: Number(r[iLevel] ?? "1"),
+      kills: num(r, iKills),
+      peakMass: num(r, iMass),
+      hits: num(r, iHits),
+      damage: num(r, iDamage),
+      level: iLevel >= 0 ? Number(r[iLevel]!) : 1,
       endedAt: Date.now(),
     }));
     await page.evaluate((top: any[]) => {

@@ -115,6 +115,12 @@ export function playHit(volume = 1): void {
   envelope(220, "square", 0.002, 0.07, 0.18, 110, 900, 4, volume);
 }
 
+/** Punchier weapon-impact sound — short noise + bright square envelope. Used for hit markers. */
+export function playWeaponHit(volume = 1): void {
+  noiseBurst(0.06, 1400, 1.6, 0.16, volume);
+  envelope(360, "square", 0.001, 0.05, 0.22, 180, 1600, 2, volume);
+}
+
 export function playDeath(volume = 1): void {
   if (!ctx) return;
   envelope(440, "sawtooth", 0.02, 0.5, 0.32, 80, 1200, 2, volume);

@@ -1,4 +1,4 @@
-import { FISH, PASSIVES, fishHp, massSpeedMult, stackedMult } from "@fcf/shared";
+import { FISH, PASSIVES, massSpeedMult, stackedMult } from "@fcf/shared";
 import type { PassiveId } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 
@@ -15,11 +15,17 @@ export function getMoveSpeed(fish: Fish): number {
 }
 
 export function getBoostCooldown(fish: Fish): number {
-  return FISH.boostCooldownMs * effectMult(fish, "recovery");
+  // Recovery is additive (unlike the other passives' multiplicative stacking):
+  // each stack subtracts 20 percentage points off base cooldown, so maxStack=4
+  // bottoms out at 20% of base. Floored at 5% so future maxStack bumps stay sane.
+  const stacks = fish.passives.get("recovery") ?? 0;
+  const mult = Math.max(0.05, 1 - 0.20 * stacks);
+  return FISH.boostCooldownMs * mult;
 }
 
-export function getMaxHp(fish: Fish): number {
-  return fishHp(fish.mass) * effectMult(fish, "scales");
+/** Multiplier on mass lost to weapon hits. <1 means the player is tougher. */
+export function getDamageTakenMult(fish: Fish): number {
+  return effectMult(fish, "scales");
 }
 
 export function getPickupRadius(baseRadius: number, fish: Fish): number {

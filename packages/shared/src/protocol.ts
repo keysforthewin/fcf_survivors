@@ -43,6 +43,24 @@ export const RespawnMsg = z.object({
 });
 export type RespawnMsg = z.infer<typeof RespawnMsg>;
 
+export const DiscardWeaponMsg = z.object({
+  t: z.literal("discardWeapon"),
+  weaponId: z.string(),
+});
+export type DiscardWeaponMsg = z.infer<typeof DiscardWeaponMsg>;
+
+export const DiscardPassiveMsg = z.object({
+  t: z.literal("discardPassive"),
+  passiveId: z.string(),
+});
+export type DiscardPassiveMsg = z.infer<typeof DiscardPassiveMsg>;
+
+export const SetLevelUpDismissedMsg = z.object({
+  t: z.literal("setLevelUpDismissed"),
+  dismissed: z.boolean(),
+});
+export type SetLevelUpDismissedMsg = z.infer<typeof SetLevelUpDismissedMsg>;
+
 export const ClientMsg = z.discriminatedUnion("t", [
   HelloMsg,
   InputMsg,
@@ -50,6 +68,9 @@ export const ClientMsg = z.discriminatedUnion("t", [
   IdentityMsg,
   SpectateMsg,
   RespawnMsg,
+  DiscardWeaponMsg,
+  DiscardPassiveMsg,
+  SetLevelUpDismissedMsg,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -70,8 +91,6 @@ export interface EntityDelta {
   hx?: number;
   hy?: number;
   mass?: number;
-  hp?: number;
-  maxHp?: number;
   color?: string;
   name?: string;
   weaponId?: string;
@@ -80,10 +99,25 @@ export interface EntityDelta {
   isAi?: boolean;
 }
 
+/** Per-tick hit event: a projectile damaged a fish. Used for client-side hit markers. */
+export interface HitEvent {
+  x: number;
+  y: number;
+  damage: number;
+  targetId: number;
+  /** True when the receiving socket owns the projectile that caused this hit. */
+  byOwner: boolean;
+}
+
 export interface YouWeaponSlot {
   id: string;
   level: number;
   cooldownReadyAt: number;
+}
+
+export interface YouPassiveSlot {
+  id: string;
+  stack: number;
 }
 
 export interface SnapshotMsg {
@@ -97,8 +131,8 @@ export interface SnapshotMsg {
     hx: number;
     hy: number;
     mass: number;
-    hp: number;
-    maxHp: number;
+    /** Hard cap on player mass; HUD uses this for the mass-cap indicator. */
+    maxMass: number;
     xp: number;
     level: number;
     nextLevelXp: number;
@@ -106,6 +140,13 @@ export interface SnapshotMsg {
     boostUntil: number;
     serverNow: number;
     weapons: YouWeaponSlot[];
+    passives: YouPassiveSlot[];
+    /**
+     * Total number of level-up picks pending on the server — includes the active
+     * card set currently shown (if any) plus all queued additional picks.
+     * 0 means no pending picks. HUD uses this to render a "k more pending" badge.
+     */
+    pendingPicks: number;
   };
   /** Server's current time, always sent (matches you.serverNow when present). */
   serverNow: number;
@@ -113,6 +154,8 @@ export interface SnapshotMsg {
   spectator?: boolean;
   entities: EntityDelta[];
   removed: number[];
+  /** Hit events that occurred this tick and are visible to this socket. */
+  hits?: HitEvent[];
 }
 
 export interface LevelUpCard {
@@ -126,6 +169,8 @@ export interface LevelUpMsg {
   t: "levelUp";
   level: number;
   cards: LevelUpCard[];
+  /** Additional picks queued behind this one. 0 means this is the last set. */
+  queued: number;
 }
 
 export interface OwnedWeapon { id: string; level: number; }
@@ -136,8 +181,12 @@ export interface EatenMsg {
   byName: string;
   byMass: number;
   finalMass: number;
+  /** Largest mass reached this run (the leaderboard "mass" stat). */
+  peakMass: number;
   finalLevel: number;
   kills: number;
+  hits: number;
+  damage: number;
   durationMs: number;
   weapons: OwnedWeapon[];
   passives: OwnedPassive[];
@@ -147,8 +196,15 @@ export interface EatenMsg {
 export interface LeaderboardEntry {
   name: string;
   color: string;
-  finalMass: number;
+  kills: number;
+  /** Largest mass reached in the player's best run. */
+  peakMass: number;
+  hits: number;
+  damage: number;
+  /** Highest level reached in the player's best run. */
   level: number;
+  /** Longest single-run survival, in ms. */
+  durationMs?: number;
   endedAt: number;
   evolution?: string | null;
 }

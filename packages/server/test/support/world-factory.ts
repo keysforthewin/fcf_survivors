@@ -1,6 +1,5 @@
 import { World, type WorldDeps } from "../../src/sim/world.ts";
 import type { Fish, Pellet, AiState } from "../../src/sim/entity.ts";
-import { fishHp } from "@fcf/shared";
 import { seededRng } from "./seeded-rng.ts";
 
 export interface FishSeed {
@@ -79,8 +78,6 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       headingX: 1,
       headingY: 0,
       mass,
-      hp: fishHp(mass),
-      maxHp: fishHp(mass),
       color: seed.color ?? "#7fcfff",
       name: seed.name ?? `Fish${id}`,
       isAi: seed.isAi ?? false,
@@ -90,12 +87,18 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       level: 1,
       xp: 0,
       kills: 0,
+      peakMass: mass,
+      hits: 0,
+      damageDealt: 0,
       spawnedAt: t,
       socketId: seed.socketId ?? (seed.isAi ? null : `test-${id}`),
       alive: true,
       weapons: [],
       passives: new Map(),
       pendingLevelUp: [],
+      queuedLevelUps: 0,
+      levelUpDismissed: false,
+      pendingLevelUpDrawId: 0,
     };
     if (seed.isAi) {
       fish.aiState = {

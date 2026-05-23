@@ -79,6 +79,9 @@ export class NetSocket {
       | { t: "identity"; name?: string; color?: string }
       | { t: "spectate"; camX: number; camY: number }
       | { t: "respawn"; name?: string; color?: string }
+      | { t: "discardWeapon"; weaponId: string }
+      | { t: "discardPassive"; passiveId: string }
+      | { t: "setLevelUpDismissed"; dismissed: boolean }
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(obj));
@@ -103,6 +106,18 @@ export class NetSocket {
 
   respawn(name?: string, color?: string): void {
     this.send({ t: "respawn", name, color });
+  }
+
+  discardWeapon(weaponId: string): void {
+    this.send({ t: "discardWeapon", weaponId });
+  }
+
+  discardPassive(passiveId: string): void {
+    this.send({ t: "discardPassive", passiveId });
+  }
+
+  setLevelUpDismissed(dismissed: boolean): void {
+    this.send({ t: "setLevelUpDismissed", dismissed });
   }
 
   isOpen(): boolean {

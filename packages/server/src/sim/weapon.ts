@@ -1,17 +1,33 @@
-import { WEAPONS, getWeaponLevel, FISH, fishHp } from "@fcf/shared";
+import { WEAPONS, getWeaponLevel, FISH, fishRadius } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
 import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState } from "./entity.ts";
 import type { World } from "./world.ts";
-import { getWeaponDamageMult, getWeaponCooldownMult, getMaxHp } from "./passives.ts";
+import { getWeaponDamageMult, getWeaponCooldownMult, getDamageTakenMult } from "./passives.ts";
 
-/** Apply weapon damage: chips HP and shaves mass so the fish visibly shrinks. */
-function applyHit(target: Fish, damage: number): void {
-  target.hp -= damage;
-  const massLoss = damage * FISH.damageMassLossRatio;
-  target.mass = Math.max(1, target.mass - massLoss);
-  target.maxHp = target.isAi ? fishHp(target.mass) : getMaxHp(target);
-  if (target.hp > target.maxHp) target.hp = target.maxHp;
-  if (target.hp <= 0) target.alive = false;
+// Spatial-hash query pad must cover the largest fish radius in play (~200 at mass 300).
+const MAX_FISH_RADIUS_PAD = 200;
+
+/**
+ * Apply weapon damage as mass drain. Mass floors at FISH.startMass so weapons
+ * can never kill — only being eaten kills a fish. Records a hit event for
+ * client-side feedback.
+ */
+function applyHit(world: World, target: Fish, owner: Fish, damage: number): void {
+  const resist = target.isAi ? 1 : getDamageTakenMult(target);
+  const massLoss = damage * FISH.damageMassLossRatio * resist;
+  target.mass = Math.max(FISH.startMass, target.mass - massLoss);
+  // Credit the firer's leaderboard stats. AI never fire, but guard anyway.
+  if (!owner.isAi) {
+    owner.hits += 1;
+    owner.damageDealt += damage;
+  }
+  world.hitEvents.push({
+    x: target.x,
+    y: target.y,
+    damage,
+    targetId: target.id,
+    ownerId: owner.id,
+  });
 }
 
 /**
@@ -24,7 +40,7 @@ function applyHit(target: Fish, damage: number): void {
  */
 export function tryFireWeapons(world: World, fish: Fish, now: number): void {
   if (!fish.alive || fish.isAi) return;
-  if (fish.pendingLevelUp.length > 0) return;
+  if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) return;
 
   const cdMult = getWeaponCooldownMult(fish);
   const dmgMult = getWeaponDamageMult(fish);
@@ -92,8 +108,9 @@ function fireLinear(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel
       weaponId: slot.id,
       x: fish.x + dirX * 6,
       y: fish.y + dirY * 6,
-      vx: dirX * speed,
-      vy: dirY * speed,
+      // Inherit shooter's velocity so shots stay "in front" of a moving fish.
+      vx: dirX * speed + fish.vx,
+      vy: dirY * speed + fish.vy,
       damage,
       radius,
       expiresAt: now + lifetimeMs,
@@ -117,8 +134,9 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
       weaponId: slot.id,
       x: fish.x + dirX * 8,
       y: fish.y + dirY * 8,
-      vx: dirX * speed,
-      vy: dirY * speed,
+      // Inherit shooter's velocity so the ring drifts with a moving fish.
+      vx: dirX * speed + fish.vx,
+      vy: dirY * speed + fish.vy,
       damage,
       radius,
       expiresAt: now + lifetimeMs,
@@ -148,13 +166,14 @@ function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel,
 
   // Apply damage to any fish in range. Self-damage is prevented by id check.
   const scratch: Fish[] = [];
-  world.fishHash.query(fish.x, fish.y, radius, scratch);
+  world.fishHash.query(fish.x, fish.y, radius + MAX_FISH_RADIUS_PAD, scratch);
   for (const target of scratch) {
     if (target.id === fish.id || !target.alive) continue;
     const dx = target.x - fish.x;
     const dy = target.y - fish.y;
-    if (dx * dx + dy * dy > radius * radius) continue;
-    applyHit(target, damage);
+    const reach = radius + fishRadius(target.mass);
+    if (dx * dx + dy * dy > reach * reach) continue;
+    applyHit(world, target, fish, damage);
   }
 }
 
@@ -277,12 +296,12 @@ export function applyProjectileDamage(world: World, now: number): void {
     }
 
     scratch.length = 0;
-    world.fishHash.query(proj.x, proj.y, proj.radius + 40, scratch);
+    world.fishHash.query(proj.x, proj.y, proj.radius + MAX_FISH_RADIUS_PAD, scratch);
     for (const target of scratch) {
       if (target.id === proj.ownerId || !target.alive) continue;
       const dx = target.x - proj.x;
       const dy = target.y - proj.y;
-      const reach = proj.radius + 6;
+      const reach = proj.radius + fishRadius(target.mass);
       if (dx * dx + dy * dy > reach * reach) continue;
 
       // re-hit gate
@@ -291,7 +310,7 @@ export function applyProjectileDamage(world: World, now: number): void {
         if (now - lastHit < proj.reHitMs) continue;
       }
       proj.hits.set(target.id, now);
-      applyHit(target, proj.damage);
+      applyHit(world, target, owner, proj.damage);
 
       if (proj.behavior === "linear") {
         // expire after first hit

@@ -2,8 +2,9 @@ import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type Lev
 import { ARENA, TICK } from "@fcf/shared";
 import { World, type WorldDeps } from "./sim/world.ts";
 import { processLevelUps, applyCard } from "./sim/levelup.ts";
+import { discardWeapon, discardPassive } from "./sim/discard.ts";
 import { ClientView, buildSnapshot, buildSpectatorSnapshot } from "./net/snapshot.ts";
-import { topLeaderboard, writeScore, ensureMongo } from "./db/scores.ts";
+import { topLeaderboard, writeScore, ensureMongo, type LeaderboardSort } from "./db/scores.ts";
 import { createHash } from "node:crypto";
 
 interface SocketData {
@@ -14,8 +15,13 @@ interface SocketData {
   startedAt: number;
   name: string;
   color: string;
-  /** Level we've already pushed a LevelUpMsg for, so we don't spam. Reset on pickCard. */
-  levelUpSentForLevel: number | null;
+  /**
+   * Draw id of the pendingLevelUp set we last pushed a LevelUpMsg for. The
+   * server increments fish.pendingLevelUpDrawId each time it assigns a fresh
+   * pendingLevelUp (initial level-up, or after a pickCard drained a queued one),
+   * so this gate fires exactly once per new card set.
+   */
+  levelUpSentDrawId: number | null;
   /** True while the socket has no fish but is still receiving world snapshots. */
   isSpectator: boolean;
   /** Last reported camera center for spectators (informational; full world is sent). */
@@ -59,6 +65,11 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
   const PORT = opts.port ?? Number(process.env.PORT ?? 4000);
   const world = new World(opts.worldDeps);
   const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
+  // Per-player session metadata keyed by fishId. Outlives the socket so a
+  // disconnect (where ws.data is no longer reachable from the tick loop) can
+  // still produce a complete ScoreDoc. The `disconnected` flag tells the
+  // dead-fish loop to credit "the void" instead of a nearby player.
+  const playerSessions = new Map<number, { startedAt: number; ipHash: string; disconnected: boolean }>();
   let socketCounter = 0;
   const log = opts.log ?? true;
 
@@ -134,6 +145,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       x: number;
       y: number;
       mass: number;
+      peakMass: number;
+      hits: number;
+      damage: number;
       level: number;
       kills: number;
       spawnedAt: number;
@@ -150,15 +164,21 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       if (f.alive) continue;
       allDead.push({ x: f.x, y: f.y, mass: f.mass, color: f.color });
       if (!f.isAi && f.socketId) {
+        // Disconnects don't credit a nearby fish; the toast on other clients
+        // keys "left" off byName === "the void". This also closes the
+        // rage-quit-feeds-your-friend exploit.
+        const isDisconnect = playerSessions.get(f.id)?.disconnected ?? false;
         let killer: { name: string; mass: number } | null = null;
-        let bestMass = 0;
-        for (const other of world.fish.values()) {
-          if (other.id === f.id || !other.alive) continue;
-          const dx = other.x - f.x;
-          const dy = other.y - f.y;
-          if (dx * dx + dy * dy <= 250 * 250 && other.mass > bestMass) {
-            bestMass = other.mass;
-            killer = { name: other.name, mass: other.mass };
+        if (!isDisconnect) {
+          let bestMass = 0;
+          for (const other of world.fish.values()) {
+            if (other.id === f.id || !other.alive) continue;
+            const dx = other.x - f.x;
+            const dy = other.y - f.y;
+            if (dx * dx + dy * dy <= 250 * 250 && other.mass > bestMass) {
+              bestMass = other.mass;
+              killer = { name: other.name, mass: other.mass };
+            }
           }
         }
         const EVOLUTION_IDS = new Set(["tidal", "puffer", "eel", "kraken", "school"]);
@@ -170,6 +190,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           x: f.x,
           y: f.y,
           mass: f.mass,
+          peakMass: f.peakMass,
+          hits: f.hits,
+          damage: f.damageDealt,
           level: f.level,
           kills: f.kills,
           spawnedAt: f.spawnedAt,
@@ -197,6 +220,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // notify dead players + persist score
     for (const dp of deadPlayers) {
       const ws = [...sockets.values()].find((s) => s.data.fishId === dp.fishId);
+      const session = playerSessions.get(dp.fishId);
+      playerSessions.delete(dp.fishId);
+
       // Broadcast playerDied to everyone except the dying socket (or to everyone
       // if the socket is already gone — disconnect case).
       broadcast(
@@ -204,67 +230,83 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         ws,
       );
       broadcastRoster();
-      if (!ws) continue;
-      const startedAt = ws.data.startedAt;
+
+      const startedAt = session?.startedAt ?? dp.spawnedAt;
+      const ipH = session?.ipHash ?? "unknown";
       const durationMs = wallNow - startedAt;
-      send(ws, {
-        t: "eaten",
-        byName: dp.killerName,
-        byMass: dp.killerMass,
-        finalMass: dp.mass,
-        finalLevel: dp.level,
-        kills: dp.kills,
-        durationMs,
-        weapons: dp.weapons,
-        passives: dp.passives,
-        evolution: dp.evolution,
-      } satisfies EatenMsg);
-      ws.data.fishId = null;
-      ws.data.isSpectator = true;
-      ws.data.camX = dp.x;
-      ws.data.camY = dp.y;
-      // Reset the view cache so the spectator's whole-world snapshot rebuilds cleanly
-      // (previous interest-filtered cache would otherwise leave stale entities outside the old view).
-      ws.data.view = new ClientView();
+
+      if (ws) {
+        send(ws, {
+          t: "eaten",
+          byName: dp.killerName,
+          byMass: dp.killerMass,
+          finalMass: dp.mass,
+          peakMass: dp.peakMass,
+          finalLevel: dp.level,
+          kills: dp.kills,
+          hits: dp.hits,
+          damage: dp.damage,
+          durationMs,
+          weapons: dp.weapons,
+          passives: dp.passives,
+          evolution: dp.evolution,
+        } satisfies EatenMsg);
+        ws.data.fishId = null;
+        ws.data.isSpectator = true;
+        ws.data.camX = dp.x;
+        ws.data.camY = dp.y;
+        // NB: do NOT reset ws.data.view here. The view's prevSent is the server's
+        // model of what the client currently has rendered; the snapshot diff
+        // (prevSent − seen → removed) relies on it carrying across mode changes.
+        // Wiping it would silently strand any client-side entities outside the
+        // next snapshot's seen set as never-removed ghosts.
+      }
+
       writeScore({
         name: dp.name,
         color: dp.color,
-        finalMass: dp.mass,
-        level: dp.level,
         kills: dp.kills,
+        peakMass: dp.peakMass,
+        hits: dp.hits,
+        damage: dp.damage,
+        level: dp.level,
         durationMs,
         killedBy: dp.killerName,
         startedAt: new Date(startedAt),
         endedAt: new Date(wallNow),
-        ipHash: ipHash(ws.data.ip),
+        ipHash: ipH,
         weapons: dp.weapons,
         passives: dp.passives,
         evolution: dp.evolution,
       }).catch(() => {});
-      broadcastLeaderboard(ws).catch(() => {});
+
+      if (ws) broadcastLeaderboard(ws).catch(() => {});
+      else broadcastLeaderboard().catch(() => {});
     }
 
     // level up handling — extracted so tests and prod use the same code path
     processLevelUps(world);
 
-    // dispatch level-up modals to players whose pendingLevelUp just populated
+    // Dispatch level-up modals to players whose pendingLevelUp just populated
+    // OR just rotated to the next queued pick.
     for (const ws of sockets.values()) {
       const fid = ws.data.fishId;
       if (fid === null) continue;
       const fish = world.fish.get(fid);
       if (!fish || !fish.alive) continue;
       if (fish.pendingLevelUp.length === 0) {
-        ws.data.levelUpSentForLevel = null;
+        ws.data.levelUpSentDrawId = null;
         continue;
       }
-      if (ws.data.levelUpSentForLevel === fish.level) continue;
+      if (ws.data.levelUpSentDrawId === fish.pendingLevelUpDrawId) continue;
       const msg: LevelUpMsg = {
         t: "levelUp",
         level: fish.level,
         cards: fish.pendingLevelUp,
+        queued: fish.queuedLevelUps,
       };
       send(ws, msg);
-      ws.data.levelUpSentForLevel = fish.level;
+      ws.data.levelUpSentDrawId = fish.pendingLevelUpDrawId;
     }
 
     // send snapshots
@@ -285,8 +327,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // Join/death events also push an immediate roster — see broadcastRoster() above.
     if (world.tick % 10 === 0) broadcastRoster();
 
-    // clear removed buffer
+    // clear removed buffer + hit events now that all snapshots have been built
     world.removedIds.length = 0;
+    world.hitEvents.length = 0;
   }, TICK.ms);
 
   // HTTP + WS server
@@ -298,14 +341,15 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         const id = `s${++socketCounter}`;
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? srv.requestIP(req)?.address ?? "unknown";
         const ok = srv.upgrade(req, {
-          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentForLevel: null, isSpectator: false, camX: ARENA.width / 2, camY: ARENA.height / 2 },
+          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentDrawId: null, isSpectator: false, camX: ARENA.width / 2, camY: ARENA.height / 2 },
         });
         if (ok) return undefined;
         return new Response("Upgrade failed", { status: 500 });
       }
       if (url.pathname === "/leaderboard") {
         const sortParam = url.searchParams.get("sort");
-        const sort = sortParam === "recent" || sortParam === "kills" ? sortParam : "mass";
+        const valid = ["kills", "mass", "hits", "damage", "level", "time"] as const;
+        const sort = (valid as readonly string[]).includes(sortParam ?? "") ? (sortParam as LeaderboardSort) : "kills";
         return topLeaderboard(20, sort)
           .then((rows) => new Response(JSON.stringify(rows), { headers: { "content-type": "application/json" } }));
       }
@@ -341,7 +385,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           ws.data.startedAt = now;
           ws.data.name = name;
           ws.data.color = color;
-          ws.data.view = new ClientView();
+          playerSessions.set(fish.id, { startedAt: now, ipHash: ipHash(ws.data.ip), disconnected: false });
           send(ws, {
             t: "welcome",
             selfId: fish.id,
@@ -372,18 +416,35 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (!parsed) return;
           const ok = applyCard(world, fish, msg.cardId, parsed);
           if (ok) {
-            ws.data.levelUpSentForLevel = null;
+            ws.data.levelUpSentDrawId = null;
           }
+        } else if (msg.t === "discardWeapon") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish) return;
+          discardWeapon(world, fish, msg.weaponId);
+        } else if (msg.t === "discardPassive") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish) return;
+          discardPassive(fish, msg.passiveId);
+        } else if (msg.t === "setLevelUpDismissed") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          // No-op when no modal is pending — guards against stale clients.
+          if (fish.pendingLevelUp.length === 0) return;
+          fish.levelUpDismissed = msg.dismissed;
         } else if (msg.t === "spectate") {
           // Spectator camera heartbeat. Allowed only when the socket has no live fish.
           if (ws.data.fishId !== null) {
             const f = world.fish.get(ws.data.fishId);
             if (f && f.alive) return;
           }
-          if (!ws.data.isSpectator) {
-            ws.data.isSpectator = true;
-            ws.data.view = new ClientView();
-          }
+          ws.data.isSpectator = true;
           ws.data.camX = msg.camX;
           ws.data.camY = msg.camY;
         } else if (msg.t === "respawn") {
@@ -400,8 +461,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           ws.data.name = name;
           ws.data.color = color;
           ws.data.isSpectator = false;
-          ws.data.levelUpSentForLevel = null;
-          ws.data.view = new ClientView();
+          ws.data.levelUpSentDrawId = null;
+          playerSessions.set(fish.id, { startedAt: now, ipHash: ipHash(ws.data.ip), disconnected: false });
           send(ws, {
             t: "welcome",
             selfId: fish.id,
@@ -441,6 +502,12 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         if (fid !== null) {
           const f = world.fish.get(fid);
           if (f && f.alive) {
+            // Mark the session as disconnected BEFORE killing the fish so the
+            // next tick's dead-player loop treats it as a "left" rather than
+            // an in-arena death, and still persists the ScoreDoc using the
+            // session's startedAt / ipHash (ws is about to be unreachable).
+            const session = playerSessions.get(fid);
+            if (session) session.disconnected = true;
             f.alive = false;
           }
         }

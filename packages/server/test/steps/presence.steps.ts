@@ -37,6 +37,30 @@ Then(
   }
 );
 
+Then(
+  "client {string} receives a playerDied for {string} with byName {string}",
+  { timeout: 5_000 },
+  async function (this: TestWorld, label: string, name: string, byName: string) {
+    const c = this.requireClient(label);
+    const msg = await c.wait((m) => m.t === "playerDied" && m.name === name);
+    assert.equal(msg.name, name);
+    assert.equal(msg.byName, byName, `Expected playerDied.byName="${byName}", got "${msg.byName}"`);
+  }
+);
+
+Then(
+  "client {string} does not receive a playerDied within {int}ms",
+  async function (this: TestWorld, label: string, ms: number) {
+    const c = this.requireClient(label);
+    let saw = false;
+    try {
+      await c.wait((m) => m.t === "playerDied", ms);
+      saw = true;
+    } catch {}
+    assert.ok(!saw, `Did not expect a playerDied but one arrived`);
+  }
+);
+
 When(
   "the fish for client {string} is killed",
   function (this: TestWorld, label: string) {

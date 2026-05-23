@@ -6,7 +6,7 @@ Feature: Eating mechanics
   Background:
     Given a fresh world
 
-  Scenario: A pellet next to a fish is eaten and grants mass + XP + HP
+  Scenario: A pellet next to a fish is eaten and grants mass + XP
     Given a player "Alpha" at (1000, 1000) with mass 10
     And a pellet at (1005, 1000)
     When the world advances 1 tick

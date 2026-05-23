@@ -306,18 +306,24 @@ button.play:active { transform: translateY(0); }
 .boost-indicator.ready { color: var(--accent); }
 
 /* === Weapon HUD === */
-.hud-weapons {
+.hud-skills {
   position: fixed;
   bottom: 36px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   z-index: 5;
-  pointer-events: none;
 }
 
-.weapon-pip {
+.hud-skill-row {
+  display: flex;
+  gap: 10px;
+}
+
+.skill-pip {
   width: 52px;
   height: 52px;
   background: rgba(0,0,0,0.45);
@@ -329,21 +335,32 @@ button.play:active { transform: translateY(0); }
   justify-content: center;
   backdrop-filter: blur(4px);
   overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.08s ease, border-color 0.1s ease;
 }
 
-.weapon-pip.empty {
-  opacity: 0.3;
-  border-style: dashed;
+.skill-pip:hover { border-color: rgba(255,255,255,0.3); transform: translateY(-1px); }
+.skill-pip.empty { opacity: 0.3; border-style: dashed; cursor: default; }
+.skill-pip.empty:hover { transform: none; }
+.skill-pip.empty.actionable {
+  opacity: 0.55;
+  cursor: pointer;
+  border-color: rgba(255,217,127,0.45);
+}
+.skill-pip.empty.actionable:hover {
+  opacity: 0.8;
+  border-color: rgba(255,217,127,0.75);
+  transform: translateY(-1px);
 }
 
-.weapon-pip-icon {
+.skill-pip-icon {
   font-size: 1.7rem;
   line-height: 1;
   color: var(--accent-2);
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
 }
 
-.weapon-pip-level {
+.skill-pip-label {
   position: absolute;
   bottom: 3px;
   right: 5px;
@@ -351,16 +368,145 @@ button.play:active { transform: translateY(0); }
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.05em;
+  z-index: 2;
 }
 
-.weapon-pip-cooldown {
+.skill-pip-cooldown {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.55);
-  transform-origin: top;
-  transform: scale(0);
-  transition: transform 0.06s linear;
+  border-radius: inherit;
+  background: transparent;
   pointer-events: none;
+  z-index: 1;
+}
+
+.hud-skill-hint {
+  align-self: center;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffd97f;
+  background: rgba(255,217,127,0.08);
+  border: 1px solid rgba(255,217,127,0.4);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  animation: hud-skill-hint-pulse 2.4s ease-in-out infinite;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+.hud-skill-hint:hover {
+  background: rgba(255,217,127,0.18);
+  border-color: rgba(255,217,127,0.7);
+  transform: translateY(-1px);
+}
+.hud-skill-hint.hidden { display: none; }
+@keyframes hud-skill-hint-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,217,127,0); }
+  50%      { box-shadow: 0 0 14px 1px rgba(255,217,127,0.35); }
+}
+
+/* === Skill detail panel === */
+.skill-panel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(10,34,54,0.55) 0%, rgba(6,18,28,0.85) 80%);
+  backdrop-filter: blur(4px);
+  animation: levelup-fade-in 0.16s ease-out both;
+}
+
+.skill-panel-card {
+  width: min(380px, 90vw);
+  background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.1);
+  border-top: 3px solid var(--accent-2);
+  border-radius: 14px;
+  padding: 1.4rem 1.4rem 1.2rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.skill-panel-card.kind-passive { border-top-color: var(--accent); }
+
+.skill-panel-header { display: flex; flex-direction: column; gap: 0.3rem; }
+
+.skill-panel-kind {
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  color: var(--accent-2);
+  text-transform: uppercase;
+}
+
+.skill-panel-card.kind-passive .skill-panel-kind { color: var(--accent); }
+
+.skill-panel-title {
+  font-size: 1.2rem;
+  margin: 0;
+  letter-spacing: 0.03em;
+}
+
+.skill-panel-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.skill-panel-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.4rem;
+}
+
+.skill-panel-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.35rem 0.6rem;
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.skill-panel-stat span { color: var(--muted); }
+.skill-panel-stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.skill-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.skill-panel-actions button {
+  font: inherit;
+  padding: 0.45rem 0.95rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.skill-panel-actions button:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.3);
+}
+
+.skill-panel-discard {
+  background: rgba(255,90,110,0.18) !important;
+  border-color: rgba(255,90,110,0.4) !important;
+  color: #ffd0d6 !important;
+}
+
+.skill-panel-discard:hover {
+  background: rgba(255,90,110,0.32) !important;
 }
 
 /* === Level-up modal === */
@@ -405,6 +551,21 @@ button.play:active { transform: translateY(0); }
   font-size: 1.6rem;
   letter-spacing: 0.04em;
   margin-top: 0.4rem;
+}
+
+.levelup-banner-queued {
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-top: 0.5rem;
+  min-height: 1em;
+}
+
+.levelup-cards.locked {
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
 .levelup-cards {
@@ -472,6 +633,34 @@ button.play:active { transform: translateY(0); }
   color: transparent;
 }
 
+.levelup-skip {
+  margin-top: 1.6rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.6rem 1.4rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.levelup-skip:hover {
+  background: rgba(255,255,255,0.10);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.30);
+}
+
+.levelup-skip:focus { outline: none; }
+
+/* When the player dismisses, hide the overlay entirely but keep the DOM + keydown listener alive so Esc can restore it. */
+.levelup-overlay.dismissed {
+  display: none;
+}
+
 /* === Death screen === */
 .death-card h1 {
   margin: 0 0 1rem;
@@ -537,7 +726,16 @@ button.play:active { transform: translateY(0); }
 .leaderboard-name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.leaderboard-sub {
+  flex-basis: 100%;
+  font-size: 0.62rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
 .leaderboard-dot {
@@ -720,7 +918,7 @@ button.play:active { transform: translateY(0); }
   .hud { font-size: 0.95rem; }
   /* Weapons and XP bar live at the very bottom, below the touch controls */
   .xp-bar { bottom: 8px; }
-  .hud-weapons { bottom: 22px; }
+  .hud-skills { bottom: 22px; }
   .touch-stick { bottom: 100px; }
   .touch-boost { bottom: 110px; }
 }
@@ -952,3 +1150,45 @@ button.play:active { transform: translateY(0); }
 
 .identity-save:hover { filter: brightness(1.05); transform: translateY(-1px); }
 .identity-save:active { transform: translateY(0); }
+
+.damage-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 25;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.damage-number {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-weight: 700;
+  font-size: 18px;
+  color: #fffae0;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.85),
+    0 1px 0 rgba(0, 0, 0, 0.8);
+  letter-spacing: 0.02em;
+  transform: translate(-9999px, -9999px);
+  will-change: transform, opacity;
+}
+
+.damage-number.owner {
+  color: #fff8c8;
+  font-size: 22px;
+  text-shadow:
+    0 0 6px rgba(255, 200, 80, 0.6),
+    0 0 3px rgba(0, 0, 0, 0.9),
+    0 1px 0 rgba(0, 0, 0, 0.8);
+}
+
+.damage-number.self {
+  color: #ffbcb0;
+  font-size: 20px;
+  text-shadow:
+    0 0 6px rgba(255, 80, 70, 0.5),
+    0 0 3px rgba(0, 0, 0, 0.9),
+    0 1px 0 rgba(0, 0, 0, 0.8);
+}

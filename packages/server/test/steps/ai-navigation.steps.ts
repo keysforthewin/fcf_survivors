@@ -120,3 +120,17 @@ Then(
     );
   }
 );
+
+Then(
+  "{string} is at least {float} units from \\({float}, {float}\\)",
+  function (this: TestWorld, name: string, dist: number, x: number, y: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    const d = Math.hypot(f.x - x, f.y - y);
+    assert.ok(
+      d >= dist,
+      `Expected ${name} ≥${dist} units from (${x}, ${y}), got ${d.toFixed(2)}`
+    );
+  }
+);

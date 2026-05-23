@@ -1,13 +1,15 @@
 import { MongoClient, type Collection } from "mongodb";
 
+/** A single completed run, handed to writeScore() when a player dies. */
 export interface ScoreDoc {
   name: string;
-  /** Lowercased name — the dedup key. Computed by upsertScore; callers don't supply it. */
-  nameKey?: string;
   color: string;
-  finalMass: number;
-  level: number;
   kills: number;
+  /** Largest mass reached during the run (not the mass at death). */
+  peakMass: number;
+  hits: number;
+  damage: number;
+  level: number;
   durationMs: number;
   killedBy: string | null;
   startedAt: Date;
@@ -18,25 +20,117 @@ export interface ScoreDoc {
   evolution: string | null;
 }
 
+/**
+ * Stored per-name career record (one doc per nameKey). Each stat keeps the
+ * player's all-time best across runs; the loadout/level come from their
+ * best-kills run; color + endedAt track the latest run. This is the shape
+ * persisted in Mongo.
+ */
+export interface StoredScore {
+  name: string;
+  /** Lowercased name — the dedup key. */
+  nameKey: string;
+  color: string;
+  maxKills: number;
+  maxPeakMass: number;
+  maxHits: number;
+  maxDamage: number;
+  /** Highest level reached across all runs. */
+  maxLevel: number;
+  /** Longest single-run survival, in ms, across all runs. */
+  maxDurationMs: number;
+  level: number;
+  weapons: Array<{ id: string; level: number }>;
+  passives: Array<{ id: string; stack: number }>;
+  evolution: string | null;
+  endedAt: Date;
+  // Latest-run context, retained but not shown on the board.
+  durationMs: number;
+  killedBy: string | null;
+  startedAt: Date;
+  ipHash: string;
+}
+
 export interface LeaderboardRow {
   name: string;
   color: string;
-  finalMass: number;
+  kills: number;
+  peakMass: number;
+  hits: number;
+  damage: number;
+  /** Highest level reached. */
   level: number;
+  /** Longest single-run survival, in ms. */
+  durationMs: number;
   endedAt: number;
   evolution?: string | null;
 }
 
-export type LeaderboardSort = "mass" | "recent" | "kills";
+export type LeaderboardSort = "kills" | "mass" | "hits" | "damage" | "level" | "time";
 
-const MONGO_URL = process.env.MONGO_URL ?? "mongodb://localhost:27017";
-const DB_NAME = process.env.MONGO_DB ?? "fcf_survivors";
+/**
+ * Merge a completed run into a player's career-bests record. Every numeric
+ * stat keeps its all-time max independently; the displayed loadout/level come
+ * from the best-kills run (refreshed when this run ties or beats the prior kill
+ * record); color + endedAt track the latest run.
+ */
+export function mergeRun(existing: StoredScore | null, run: ScoreDoc): StoredScore {
+  const takeLoadout = run.kills >= (existing?.maxKills ?? -1);
+  return {
+    name: run.name,
+    nameKey: run.name.toLowerCase(),
+    color: run.color,
+    maxKills: Math.max(existing?.maxKills ?? 0, run.kills),
+    maxPeakMass: Math.max(existing?.maxPeakMass ?? 0, run.peakMass),
+    maxHits: Math.max(existing?.maxHits ?? 0, run.hits),
+    maxDamage: Math.max(existing?.maxDamage ?? 0, run.damage),
+    // Independent all-time maxes; fall back to legacy fields for docs that predate them.
+    maxLevel: Math.max(existing?.maxLevel ?? existing?.level ?? 0, run.level),
+    maxDurationMs: Math.max(existing?.maxDurationMs ?? existing?.durationMs ?? 0, run.durationMs),
+    level: takeLoadout ? run.level : existing?.level ?? run.level,
+    weapons: takeLoadout ? run.weapons : existing?.weapons ?? run.weapons,
+    passives: takeLoadout ? run.passives : existing?.passives ?? run.passives,
+    evolution: takeLoadout ? run.evolution : existing?.evolution ?? null,
+    endedAt: run.endedAt,
+    durationMs: run.durationMs,
+    killedBy: run.killedBy,
+    startedAt: run.startedAt,
+    ipHash: run.ipHash,
+  };
+}
+
+/** Project a stored career record onto the wire/leaderboard row shape. */
+export function careerToRow(c: StoredScore): LeaderboardRow {
+  return {
+    name: c.name,
+    color: c.color,
+    kills: c.maxKills ?? 0,
+    peakMass: c.maxPeakMass ?? 0,
+    hits: c.maxHits ?? 0,
+    damage: c.maxDamage ?? 0,
+    level: c.maxLevel ?? c.level ?? 0,
+    durationMs: c.maxDurationMs ?? c.durationMs ?? 0,
+    endedAt: c.endedAt.getTime(),
+    evolution: c.evolution ?? null,
+  };
+}
+
 const QUEUE_CAP = 200;
+/** After a failed connect, wait this long before trying again (avoids hammering). */
+const RECONNECT_BACKOFF_MS = 3000;
+
+// Read at connect time, not module load, so a server that boots before Mongo
+// (e.g. `bun run dev` racing `docker compose up -d mongo`) still picks up the
+// right target on a later retry, and tests can repoint it.
+const mongoUrl = (): string => process.env.MONGO_URL ?? "mongodb://localhost:27017";
+const mongoDb = (): string => process.env.MONGO_DB ?? "fcf_survivors";
 
 let client: MongoClient | null = null;
-let scoresColl: Collection<ScoreDoc> | null = null;
-let connectAttempted = false;
-let connectFailed = false;
+let scoresColl: Collection<StoredScore> | null = null;
+/** Shared promise while a connect is in flight, so concurrent callers don't open multiple clients. */
+let connectInFlight: Promise<Collection<StoredScore> | null> | null = null;
+/** Epoch ms before which we won't re-attempt a connect after a recent failure. */
+let nextConnectAt = 0;
 const pendingWrites: ScoreDoc[] = [];
 
 /** Test seam: when set, writeScore/topLeaderboard delegate to these instead of Mongo. */
@@ -49,40 +143,56 @@ export function setScoresImpl(impl: ScoresImpl | null): void {
   _impl = impl;
 }
 
-export async function ensureMongo(): Promise<Collection<ScoreDoc> | null> {
+/**
+ * Lazily connect to Mongo, retrying on later calls instead of latching failure.
+ * The first attempt happens at boot (fire-and-forget); if Mongo isn't up yet it
+ * fails, queues writes, and backs off — then the next writeScore / leaderboard
+ * query (or the 15s periodic broadcast) reconnects and flushes the queue. This
+ * is what keeps "queues up to 200 docs and flushes on reconnect" actually true.
+ */
+export async function ensureMongo(): Promise<Collection<StoredScore> | null> {
   if (scoresColl) return scoresColl;
-  if (connectAttempted && connectFailed) return null;
-  if (connectAttempted) return scoresColl;
-  connectAttempted = true;
-  try {
-    const c = new MongoClient(MONGO_URL, { serverSelectionTimeoutMS: 1500 });
-    await c.connect();
-    const db = c.db(DB_NAME);
-    const coll = db.collection<ScoreDoc>("scores");
-    await coll.createIndex({ finalMass: -1 });
-    await coll.createIndex({ endedAt: -1 });
-    await coll.createIndex({ kills: -1 });
-    await migrateNameKey(coll);
-    await coll.createIndex({ nameKey: 1 }, { unique: true });
-    await coll.createIndex({ "weapons.id": 1 });
-    client = c;
-    scoresColl = coll;
-    console.log(`[mongo] connected to ${MONGO_URL}/${DB_NAME}`);
-    await flushPendingWrites();
-    return coll;
-  } catch (err) {
-    connectFailed = true;
-    console.warn(`[mongo] connection failed — scores will be ephemeral: ${(err as Error).message}`);
-    return null;
-  }
+  if (connectInFlight) return connectInFlight;
+  if (Date.now() < nextConnectAt) return null; // backing off after a recent failure
+  connectInFlight = (async () => {
+    const url = mongoUrl();
+    const dbName = mongoDb();
+    try {
+      const c = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+      await c.connect();
+      const coll = c.db(dbName).collection<StoredScore>("scores");
+      await coll.createIndex({ maxKills: -1 });
+      await coll.createIndex({ maxPeakMass: -1 });
+      await coll.createIndex({ maxHits: -1 });
+      await coll.createIndex({ maxDamage: -1 });
+      await coll.createIndex({ maxLevel: -1 });
+      await coll.createIndex({ maxDurationMs: -1 });
+      await migrateNameKey(coll);
+      await coll.createIndex({ nameKey: 1 }, { unique: true });
+      await coll.createIndex({ "weapons.id": 1 });
+      client = c;
+      scoresColl = coll;
+      console.log(`[mongo] connected to ${url}/${dbName}`);
+      await flushPendingWrites();
+      return coll;
+    } catch (err) {
+      nextConnectAt = Date.now() + RECONNECT_BACKOFF_MS;
+      console.warn(`[mongo] connection failed — queuing scores, will retry: ${(err as Error).message}`);
+      return null;
+    } finally {
+      connectInFlight = null;
+    }
+  })();
+  return connectInFlight;
 }
 
 /**
- * Idempotent migration for the unique nameKey index. Backfills nameKey on
- * legacy docs that predate it, then collapses duplicates by keeping only the
- * highest-finalMass doc per nameKey. Safe to run on every boot.
+ * Idempotent migration for the unique nameKey index. Backfills nameKey on docs
+ * that predate it, drops nameless docs, then collapses duplicates by keeping
+ * the highest-scoring doc per nameKey (best-effort across legacy `finalMass`
+ * and current `maxKills` schemas). Safe to run on every boot.
  */
-async function migrateNameKey(coll: Collection<ScoreDoc>): Promise<void> {
+async function migrateNameKey(coll: Collection<StoredScore>): Promise<void> {
   const missing = coll.find({
     $or: [{ nameKey: { $exists: false } }, { nameKey: { $eq: null as any } }],
   });
@@ -100,15 +210,20 @@ async function migrateNameKey(coll: Collection<ScoreDoc>): Promise<void> {
   }
 
   const groups = await coll
-    .aggregate<{ _id: string; ids: Array<{ id: unknown; finalMass: number }> }>([
+    .aggregate<{ _id: string; ids: Array<{ id: unknown; score: number }> }>([
       { $match: { nameKey: { $type: "string" } } },
-      { $group: { _id: "$nameKey", ids: { $push: { id: "$_id", finalMass: "$finalMass" } } } },
+      {
+        $group: {
+          _id: "$nameKey",
+          ids: { $push: { id: "$_id", score: { $ifNull: ["$maxKills", { $ifNull: ["$finalMass", 0] }] } } },
+        },
+      },
       { $match: { $expr: { $gt: [{ $size: "$ids" }, 1] } } },
     ])
     .toArray();
   let deduped = 0;
   for (const g of groups) {
-    const sorted = [...g.ids].sort((a, b) => (b.finalMass ?? 0) - (a.finalMass ?? 0));
+    const sorted = [...g.ids].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     const toDelete = sorted.slice(1).map((d) => d.id);
     if (toDelete.length > 0) {
       const r = await coll.deleteMany({ _id: { $in: toDelete as any } });
@@ -122,24 +237,16 @@ async function migrateNameKey(coll: Collection<ScoreDoc>): Promise<void> {
 }
 
 /**
- * Upsert a single score doc keyed by nameKey, keeping the highest finalMass.
- * Two-step: first try to replace an existing-but-worse doc atomically, then
- * fall back to insert-if-missing. The unique index on nameKey makes this safe
- * under concurrent writes for the same name.
+ * Upsert a run into the player's career record keyed by nameKey. Read-modify-
+ * write through mergeRun: low write volume (one per death) on a single-process
+ * server makes this safe enough; the unique nameKey index plus the writeScore
+ * retry queue cover the rare concurrent-write-for-same-name case.
  */
-async function upsertScore(coll: Collection<ScoreDoc>, doc: ScoreDoc): Promise<void> {
-  const full = { ...doc, nameKey: doc.name.toLowerCase() };
-  const r = await coll.updateOne(
-    { nameKey: full.nameKey, finalMass: { $lt: full.finalMass } },
-    { $set: full },
-  );
-  if (r.matchedCount === 0) {
-    await coll.updateOne(
-      { nameKey: full.nameKey },
-      { $setOnInsert: full },
-      { upsert: true },
-    );
-  }
+async function upsertScore(coll: Collection<StoredScore>, run: ScoreDoc): Promise<void> {
+  const nameKey = run.name.toLowerCase();
+  const existing = await coll.findOne({ nameKey });
+  const merged = mergeRun(existing ?? null, run);
+  await coll.replaceOne({ nameKey }, merged, { upsert: true });
 }
 
 async function flushPendingWrites(): Promise<void> {
@@ -181,29 +288,34 @@ export async function writeScore(doc: ScoreDoc): Promise<void> {
 }
 
 const SORT_FIELDS: Record<LeaderboardSort, Record<string, 1 | -1>> = {
-  mass: { finalMass: -1 },
-  recent: { endedAt: -1 },
-  kills: { kills: -1 },
+  kills: { maxKills: -1 },
+  mass: { maxPeakMass: -1 },
+  hits: { maxHits: -1 },
+  damage: { maxDamage: -1 },
+  level: { maxLevel: -1 },
+  time: { maxDurationMs: -1 },
 };
 
-export async function topLeaderboard(limit = 10, sort: LeaderboardSort = "mass"): Promise<LeaderboardRow[]> {
+export async function topLeaderboard(limit = 10, sort: LeaderboardSort = "kills"): Promise<LeaderboardRow[]> {
   if (_impl?.topLeaderboard) return _impl.topLeaderboard(limit, sort);
   const coll = await ensureMongo();
   if (!coll) return [];
   try {
     const docs = await coll
-      .find({}, { projection: { name: 1, color: 1, finalMass: 1, level: 1, endedAt: 1, evolution: 1 } })
+      .find(
+        {},
+        {
+          projection: {
+            name: 1, color: 1, maxKills: 1, maxPeakMass: 1,
+            maxHits: 1, maxDamage: 1, maxLevel: 1, maxDurationMs: 1,
+            level: 1, durationMs: 1, endedAt: 1, evolution: 1,
+          },
+        },
+      )
       .sort(SORT_FIELDS[sort])
       .limit(limit)
       .toArray();
-    return docs.map((d) => ({
-      name: d.name,
-      color: d.color,
-      finalMass: d.finalMass,
-      level: d.level,
-      endedAt: d.endedAt.getTime(),
-      evolution: (d as any).evolution ?? null,
-    }));
+    return docs.map((d) => careerToRow(d as StoredScore));
   } catch (err) {
     console.warn(`[mongo] leaderboard query failed: ${(err as Error).message}`);
     return [];
@@ -212,4 +324,8 @@ export async function topLeaderboard(limit = 10, sort: LeaderboardSort = "mass")
 
 export async function closeMongo(): Promise<void> {
   if (client) await client.close();
+  client = null;
+  scoresColl = null;
+  connectInFlight = null;
+  nextConnectAt = 0;
 }

@@ -1,11 +1,11 @@
-import type { EntityDelta, SnapshotMsg, YouWeaponSlot } from "@fcf/shared";
-import { viewRadius, xpForLevel } from "@fcf/shared";
+import type { EntityDelta, HitEvent, SnapshotMsg, YouPassiveSlot, YouWeaponSlot } from "@fcf/shared";
+import { MASS_DECAY, viewRadius, xpForLevel } from "@fcf/shared";
 import type { World } from "../sim/world.ts";
 import type { Fish, Projectile } from "../sim/entity.ts";
 
 export class ClientView {
   // last sent state per entity id, used for change detection
-  prevSent = new Map<number, { kind: string; x: number; y: number; mass?: number; hp?: number }>();
+  prevSent = new Map<number, { kind: string; x: number; y: number; mass?: number }>();
   ackSeq = 0;
 }
 
@@ -15,7 +15,7 @@ function encodeHeading(v: number): number {
   return Math.round(v * HEADING_PRECISION) / HEADING_PRECISION;
 }
 
-function fishDelta(f: Fish, prev: { mass?: number; hp?: number } | undefined): EntityDelta {
+function fishDelta(f: Fish, prev: { mass?: number } | undefined): EntityDelta {
   const delta: EntityDelta = {
     id: f.id,
     kind: "fish",
@@ -23,11 +23,9 @@ function fishDelta(f: Fish, prev: { mass?: number; hp?: number } | undefined): E
     y: Math.round(f.y),
   };
   if (!prev || Math.abs((prev.mass ?? -1) - f.mass) > 0.5) delta.mass = Math.round(f.mass);
-  if (!prev || Math.abs((prev.hp ?? -1) - f.hp) > 0.5) delta.hp = Math.round(f.hp);
   if (!prev) {
     delta.color = f.color;
     delta.name = f.name;
-    delta.maxHp = Math.round(f.maxHp);
     delta.isAi = f.isAi;
   }
   delta.vx = Math.round(f.vx);
@@ -72,7 +70,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     seen.add(f.id);
     const prev = view.prevSent.get(f.id);
     entities.push(fishDelta(f, prev));
-    view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass, hp: f.hp });
+    view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass });
   };
 
   for (const f of world.fish.values()) considerFish(f);
@@ -130,6 +128,10 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     level: s.level,
     cooldownReadyAt: s.cooldownReadyAt,
   }));
+  const passives: YouPassiveSlot[] = [...self.passives.entries()].map(([id, stack]) => ({ id, stack }));
+  const pendingPicks = (self.pendingLevelUp.length > 0 ? 1 : 0) + self.queuedLevelUps;
+
+  const hits = hitEventsFor(world, self, seen);
 
   return {
     t: "snapshot",
@@ -142,8 +144,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       hx: encodeHeading(self.headingX),
       hy: encodeHeading(self.headingY),
       mass: self.mass,
-      hp: self.hp,
-      maxHp: self.maxHp,
+      maxMass: MASS_DECAY.maxMass,
       xp: self.xp,
       level: self.level,
       nextLevelXp,
@@ -151,10 +152,34 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       boostUntil: self.boostUntil,
       serverNow: now,
       weapons,
+      passives,
+      pendingPicks,
     },
     entities,
     removed,
+    ...(hits.length > 0 ? { hits } : {}),
   };
+}
+
+/**
+ * Per-socket hit-event filter: include events whose target is visible to this socket
+ * (already in `seen`). The owner flag tells the client whether to fire owner-only
+ * feedback (camera kick, etc.).
+ */
+function hitEventsFor(world: World, self: Fish | null, seen: Set<number>): HitEvent[] {
+  if (world.hitEvents.length === 0) return [];
+  const out: HitEvent[] = [];
+  for (const e of world.hitEvents) {
+    if (!seen.has(e.targetId)) continue;
+    out.push({
+      x: Math.round(e.x),
+      y: Math.round(e.y),
+      damage: Math.round(e.damage),
+      targetId: e.targetId,
+      byOwner: self !== null && e.ownerId === self.id,
+    });
+  }
+  return out;
 }
 
 /**
@@ -170,7 +195,7 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     seen.add(f.id);
     const prev = view.prevSent.get(f.id);
     entities.push(fishDelta(f, prev));
-    view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass, hp: f.hp });
+    view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass });
   }
 
   for (const p of world.pellets.values()) {
@@ -209,6 +234,8 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     }
   }
 
+  const hits = hitEventsFor(world, null, seen);
+
   return {
     t: "snapshot",
     tick: world.tick,
@@ -217,5 +244,6 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     spectator: true,
     entities,
     removed,
+    ...(hits.length > 0 ? { hits } : {}),
   };
 }

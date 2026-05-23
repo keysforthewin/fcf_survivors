@@ -12,7 +12,7 @@ Then(
 );
 
 Then(
-  "the death screen shows final mass {int}",
+  "the death screen shows peak mass {int}",
   async ({ page }, mass: number) => {
     const death = new DeathPage(page);
     await expect(death.stats).toContainText(String(mass));

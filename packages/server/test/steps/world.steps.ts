@@ -1,6 +1,6 @@
 import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
-import { ARENA, FISH, fishHp } from "@fcf/shared";
+import { ARENA, FISH } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import {
   makeWorld,
@@ -31,8 +31,6 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
     headingX: 1,
     headingY: 0,
     mass,
-    hp: fishHp(mass),
-    maxHp: fishHp(mass),
     color: seed.color ?? "#7fcfff",
     name: seed.name ?? `Fish${id}`,
     isAi: seed.isAi ?? false,
@@ -42,12 +40,18 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
     level: 1,
     xp: 0,
     kills: 0,
+    peakMass: mass,
+    hits: 0,
+    damageDealt: 0,
     spawnedAt: sim.clock.now(),
     socketId: seed.socketId ?? (seed.isAi ? null : `test-${id}`),
     alive: true,
     weapons: [],
     passives: new Map(),
     pendingLevelUp: [],
+    queuedLevelUps: 0,
+    levelUpDismissed: false,
+    pendingLevelUpDrawId: 0,
   };
   if (seed.isAi) {
     const aiState: AiState = {
@@ -136,16 +140,6 @@ Given(
     const f = tryFish(sim, name);
     if (!f) throw new Error(`No fish named ${name}`);
     f.weapons.push({ id: weaponId as never, level, cooldownReadyAt: 0 });
-  }
-);
-
-Given(
-  "{string} starts with HP {int}",
-  function (this: TestWorld, name: string, hp: number) {
-    const sim = this.requireSim();
-    const f = tryFish(sim, name);
-    if (!f) throw new Error(`No fish named ${name}`);
-    f.hp = hp;
   }
 );
 
@@ -277,6 +271,57 @@ Then(
   }
 );
 
+Then(
+  "{string} has peak mass {float}",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing from world`);
+    assert.ok(
+      Math.abs(f.peakMass - expected) < 0.01,
+      `Expected ${name} peakMass=${expected}, got ${f.peakMass}`
+    );
+  }
+);
+
+Then(
+  "{string} has peak mass at least {float}",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing from world`);
+    assert.ok(f.peakMass >= expected, `Expected ${name} peakMass≥${expected}, got ${f.peakMass}`);
+  }
+);
+
+Then(
+  "{string} has {int} weapon hit(s)",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing from world`);
+    assert.equal(f.hits, expected, `Expected ${name} hits=${expected}, got ${f.hits}`);
+  }
+);
+
+Then(
+  "{string} has at least {int} weapon hit(s)",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing from world`);
+    assert.ok(f.hits >= expected, `Expected ${name} hits≥${expected}, got ${f.hits}`);
+  }
+);
+
+Then(
+  "{string} has dealt at least {float} damage",
+  function (this: TestWorld, name: string, expected: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing from world`);
+    assert.ok(
+      f.damageDealt >= expected,
+      `Expected ${name} damageDealt≥${expected}, got ${f.damageDealt}`
+    );
+  }
+);
+
 Then("{string} has XP {int}", function (this: TestWorld, name: string, expected: number) {
   const f = tryFish(this.requireSim(), name);
   assert.ok(f, `${name} missing from world`);
@@ -296,12 +341,6 @@ Then("{string} has kill count {int}", function (this: TestWorld, name: string, e
   const f = tryFish(this.requireSim(), name);
   assert.ok(f, `${name} missing from world`);
   assert.equal(f.kills, expected, `Expected ${name} kills=${expected}, got ${f.kills}`);
-});
-
-Then("{string} has HP {int}", function (this: TestWorld, name: string, expected: number) {
-  const f = tryFish(this.requireSim(), name);
-  assert.ok(f, `${name} missing from world`);
-  assert.equal(Math.round(f.hp), expected, `Expected ${name} hp=${expected}, got ${f.hp}`);
 });
 
 Then(
@@ -383,6 +422,30 @@ Then(
   }
 );
 
+function movedDistance(world: TestWorld, name: string): number {
+  const sim = world.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing`);
+  const startX = world.data.get(`${name}.startX`) as number | undefined;
+  const startY = world.data.get(`${name}.startY`) as number | undefined;
+  if (startX == null || startY == null) {
+    throw new Error(`No baseline position for ${name}. Use "Given baseline position of '${name}'" first.`);
+  }
+  return Math.hypot(f.x - startX, f.y - startY);
+}
+
+Then(
+  "{string} has moved at least {float} times as far as {string}",
+  function (this: TestWorld, fast: string, ratio: number, slow: string) {
+    const fastMoved = movedDistance(this, fast);
+    const slowMoved = movedDistance(this, slow);
+    assert.ok(
+      fastMoved >= slowMoved * ratio,
+      `Expected ${fast} (${fastMoved.toFixed(2)}) to move ≥${ratio}× ${slow} (${slowMoved.toFixed(2)})`
+    );
+  }
+);
+
 Given("baseline position of {string}", function (this: TestWorld, name: string) {
   const sim = this.requireSim();
   const f = tryFish(sim, name);
@@ -390,6 +453,35 @@ Given("baseline position of {string}", function (this: TestWorld, name: string) 
   this.data.set(`${name}.startX`, f.x);
   this.data.set(`${name}.startY`, f.y);
 });
+
+Given("baseline heading of {string}", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing`);
+  this.data.set(`${name}.headingAngle`, Math.atan2(f.headingY, f.headingX));
+});
+
+Then(
+  "{string} heading has rotated by at most {float} radians from baseline",
+  function (this: TestWorld, name: string, maxRad: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    const baseline = this.data.get(`${name}.headingAngle`) as number | undefined;
+    if (baseline == null) {
+      throw new Error(`No baseline heading for ${name}. Use "Given baseline heading of '${name}'" first.`);
+    }
+    const cur = Math.atan2(f.headingY, f.headingX);
+    let delta = cur - baseline;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    const mag = Math.abs(delta);
+    assert.ok(
+      mag <= maxRad,
+      `Expected ${name} heading delta ≤ ${maxRad} rad, actual ${mag.toFixed(3)} rad`,
+    );
+  },
+);
 
 Given(
   "{string} has heading \\({float}, {float}\\)",

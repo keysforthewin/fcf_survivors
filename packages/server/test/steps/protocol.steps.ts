@@ -20,6 +20,18 @@ Given(
 );
 
 When(
+  "client {string} disconnects",
+  { timeout: 5_000 },
+  async function (this: TestWorld, label: string) {
+    const c = this.requireClient(label);
+    c.close();
+    // Wait long enough for Bun.serve's async close handler + a couple of 50ms
+    // ticks so the dead-player loop has a chance to run.
+    await new Promise((r) => setTimeout(r, 200));
+  }
+);
+
+When(
   "client {string} sends hello as {string} with color {string}",
   function (this: TestWorld, label: string, name: string, color: string) {
     this.requireClient(label).hello(name, color);

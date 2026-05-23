@@ -2,13 +2,7 @@ import type { EatenMsg, LeaderboardEntry } from "@fcf/shared";
 import { WEAPONS, PASSIVES } from "@fcf/shared";
 import { loadIdentity, saveIdentity } from "../identity.ts";
 import { mountIdentityEditor } from "../hud/identity-editor.ts";
-
-type SortKey = "mass" | "recent" | "kills";
-const SORT_LABEL: Record<SortKey, string> = {
-  mass: "TOP MASS",
-  recent: "RECENT",
-  kills: "MOST KILLS",
-};
+import { type SortKey, SORT_KEYS, SORT_LABEL, renderLeaderboardRows, formatStat, formatDuration, fetchLeaderboard } from "../hud/leaderboard-view.ts";
 
 export type DeathChoice = "dive" | "spectate";
 
@@ -25,15 +19,17 @@ export function showDeath(
         <h1>You were eaten by ${escapeHtml(eaten.byName)}</h1>
         <p class="subtitle">It tasted like victory. For them.</p>
         <div class="death-stats">
-          <div class="death-stat"><span class="label">Final mass</span><span class="value">${Math.floor(eaten.finalMass)}</span></div>
-          <div class="death-stat"><span class="label">Level</span><span class="value">${eaten.finalLevel}</span></div>
+          <div class="death-stat"><span class="label">Peak mass</span><span class="value">${Math.floor(eaten.peakMass)}</span></div>
           <div class="death-stat"><span class="label">Kills</span><span class="value">${eaten.kills}</span></div>
+          <div class="death-stat"><span class="label">Hits</span><span class="value">${eaten.hits}</span></div>
+          <div class="death-stat"><span class="label">Damage</span><span class="value">${formatStat(eaten.damage)}</span></div>
+          <div class="death-stat"><span class="label">Level</span><span class="value">${eaten.finalLevel}</span></div>
           <div class="death-stat"><span class="label">Time</span><span class="value">${formatDuration(eaten.durationMs)}</span></div>
         </div>
         ${renderBuild(eaten)}
         <div class="leaderboard">
           <div class="leaderboard-tabs">
-            ${(["mass","recent","kills"] as SortKey[]).map((k, i) => `
+            ${SORT_KEYS.map((k, i) => `
               <button type="button" class="leaderboard-tab${i === 0 ? " active" : ""}" data-sort="${k}">${SORT_LABEL[k]}</button>
             `).join("")}
           </div>
@@ -47,10 +43,10 @@ export function showDeath(
     `;
     document.body.appendChild(overlay);
 
+    let currentSort: SortKey = "kills";
     const listEl = overlay.querySelector("[data-leaderboard-list]") as HTMLElement;
-    renderLeaderboard(listEl, initialLeaderboard);
+    renderLeaderboardRows(listEl, initialLeaderboard, currentSort);
 
-    let currentSort: SortKey = "mass";
     const tabs = Array.from(overlay.querySelectorAll(".leaderboard-tab")) as HTMLElement[];
     for (const tab of tabs) {
       tab.addEventListener("click", async () => {
@@ -61,7 +57,7 @@ export function showDeath(
         listEl.classList.add("loading");
         try {
           const rows = await fetchLeaderboard(sort);
-          renderLeaderboard(listEl, rows);
+          renderLeaderboardRows(listEl, rows, sort);
         } catch {
           // best-effort
         } finally {
@@ -94,31 +90,6 @@ export function showDeath(
       });
     });
   });
-}
-
-async function fetchLeaderboard(sort: SortKey): Promise<LeaderboardEntry[]> {
-  const url = `/leaderboard?sort=${sort}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  return await res.json();
-}
-
-function renderLeaderboard(el: HTMLElement, rows: LeaderboardEntry[]): void {
-  if (rows.length === 0) {
-    el.innerHTML = `<div class="leaderboard-row"><span class="leaderboard-name" style="color:var(--muted)">No runs yet.</span></div>`;
-    return;
-  }
-  el.innerHTML = rows.slice(0, 10).map((row, i) => `
-    <div class="leaderboard-row">
-      <span class="leaderboard-rank">#${i + 1}</span>
-      <span class="leaderboard-name">
-        <span class="leaderboard-dot" style="background:${escapeHtml(row.color)}"></span>
-        ${escapeHtml(row.name)}
-        ${row.evolution ? `<span class="leaderboard-evo">${escapeHtml(WEAPONS[row.evolution as keyof typeof WEAPONS]?.name ?? row.evolution)}</span>` : ""}
-      </span>
-      <span class="leaderboard-mass">${Math.floor(row.finalMass)}</span>
-    </div>
-  `).join("");
 }
 
 function renderBuild(eaten: EatenMsg): string {
@@ -164,11 +135,4 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function formatDuration(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
