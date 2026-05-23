@@ -67,15 +67,8 @@ export class ProjectileSprite {
         color: 0xb6ecff,
         quality: 0.18,
       });
-    } else if (this.weaponId === "ink" || this.weaponId === "kraken") {
-      glow = new GlowFilter({
-        distance: 10,
-        outerStrength: 1.4,
-        innerStrength: 0.0,
-        color: this.weaponId === "kraken" ? 0x9a5fff : 0x60347e,
-        quality: 0.18,
-      });
     }
+    // ink/kraken (trail weapons) are rendered separately as diffusing blobs — see render/ink.ts.
     if (glow) {
       // Explicit padding so the glow halo is included in the filter's render
       // texture — otherwise it can be clipped, leaving visible flat edges.
@@ -128,16 +121,6 @@ export class ProjectileSprite {
           .stroke({ color: 0xffb347, width: 1.5, alpha: 0.9 });
         break;
       }
-      case "ink": {
-        g.circle(0, 0, r).fill({ color: 0x1d0a2c, alpha: 0.7 }).stroke({ color: 0x60347e, width: 1.5, alpha: 0.6 });
-        // few small dark dots for texture
-        for (let i = 0; i < 4; i++) {
-          const a = (i / 4) * Math.PI * 2;
-          g.circle(Math.cos(a) * r * 0.5, Math.sin(a) * r * 0.5, r * 0.18)
-            .fill({ color: 0x0a0414, alpha: 0.7 });
-        }
-        break;
-      }
       case "piranha": {
         // small fish silhouette
         g.ellipse(0, 0, r, r * 0.7).fill({ color: 0xf08070, alpha: 0.95 }).stroke({ color: 0x701818, width: 1.5 });
@@ -154,10 +137,6 @@ export class ProjectileSprite {
       case "puffer": {
         g.moveTo(r * 1.3, 0).lineTo(-r * 0.6, r * 0.55).lineTo(-r * 0.6, -r * 0.55).closePath()
           .fill({ color: 0xffe884, alpha: 0.95 }).stroke({ color: 0xff9020, width: 2, alpha: 0.95 });
-        break;
-      }
-      case "kraken": {
-        g.circle(0, 0, r).fill({ color: 0x180626, alpha: 0.78 }).stroke({ color: 0x6e2aa0, width: 2, alpha: 0.7 });
         break;
       }
       case "school": {

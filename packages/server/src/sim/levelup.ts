@@ -122,8 +122,11 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
     pool.push({ card: makeStackCard(id, current + 1), weight: 1 });
   }
 
-  // 3. Assemble the 3-card result. Every eligible evolution is offered first
-  //    (they take priority over the random pool); slice guards the 3-card cap.
+  // 3. Assemble the draw: up to 3 distinct cards. Every eligible evolution is
+  //    offered first (they take priority over the random pool); slice guards the
+  //    3-card cap. The pool fill never adds a card already present, so the draw
+  //    is always duplicate-free — even with two evolutions ready it shows both,
+  //    never the same card twice.
   const result: LevelUpCard[] = forced.slice(0, 3);
 
   while (result.length < 3 && pool.length > 0) {
@@ -140,11 +143,9 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
     result.push(picked.card);
   }
 
-  // Safety: pad if pool ran dry (e.g. nothing left to learn) — repeat first card.
-  while (result.length < 3 && result.length > 0) {
-    result.push(result[0]!);
-  }
-
+  // If the pool ran dry we return fewer than 3 cards rather than padding with
+  // duplicates — there is genuinely nothing distinct left to offer. (drawCards
+  // only runs when canOfferAnyCard is true, so result always has ≥1 card.)
   return result;
 }
 

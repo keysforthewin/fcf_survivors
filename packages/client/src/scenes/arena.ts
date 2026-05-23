@@ -1,4 +1,4 @@
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, BlurFilter, Container, Graphics } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
@@ -9,6 +9,7 @@ import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
+import { InkBlob } from "../render/ink.ts";
 import { ZapEffect } from "../render/lightning.ts";
 import { ParticleSystem } from "../render/particles.ts";
 import { WaterCausticFilter } from "../render/water-filter.ts";
@@ -98,6 +99,7 @@ export class ArenaScene {
   private hitFlashUntil = 0;
   private hitFlashActive = false;
   pelletLayer = new Container();
+  inkLayer = new Container();
   projectileLayer = new Container();
   chunkLayer = new Container();
   fishLayer = new Container();
@@ -112,6 +114,7 @@ export class ArenaScene {
   private pellets = new Map<number, PelletState>();
   private chunks = new Map<number, ChunkState>();
   private projectiles = new Map<number, ProjectileState>();
+  private inkBlobs = new Map<number, InkBlob>();
   private zaps: ZapEffect[] = [];
   private selfId = 0;
   private serverNow = 0;
@@ -193,6 +196,7 @@ export class ArenaScene {
     this.world.addChild(this.bg);
     this.world.addChild(this.causticsLayer);
     this.world.addChild(this.pelletLayer);
+    this.world.addChild(this.inkLayer);
     this.world.addChild(this.projectileLayer);
     this.world.addChild(this.chunkLayer);
     this.world.addChild(this.fishLayer);
@@ -202,6 +206,10 @@ export class ArenaScene {
     // Caustic water shader is overlaid on the base background.
     this.bg.filters = [this.waterFilter];
     this.projectileLayer.filters = [this.bloomFilter];
+    // Blur fuses the individual soft ink blobs into one continuous, diffusing cloud.
+    const inkBlur = new BlurFilter({ strength: 7, quality: 2 });
+    inkBlur.padding = 24;
+    this.inkLayer.filters = [inkBlur];
     this.seedPlankton();
 
     this.drawBackground();
@@ -697,8 +705,18 @@ export class ArenaScene {
   }
 
   private applyProjectileDelta(ent: EntityDelta, recvTime: number): void {
-    let p = this.projectiles.get(ent.id);
     const now = recvTime;
+    // Trail weapons (ink/kraken) render as static, age-fading diffusing blobs on the
+    // blurred inkLayer rather than moving projectile sprites. They never move, so we
+    // create on first-seen and ignore subsequent deltas (weaponId only arrives once).
+    if (this.inkBlobs.has(ent.id)) return;
+    if (ent.weaponId && WEAPONS[ent.weaponId as WeaponId]?.kind === "trail") {
+      const blob = new InkBlob(ent.weaponId, ent.radius ?? 30, now, ent.x, ent.y);
+      this.inkLayer.addChild(blob.sprite);
+      this.inkBlobs.set(ent.id, blob);
+      return;
+    }
+    let p = this.projectiles.get(ent.id);
     if (!p) {
       const weaponId = ent.weaponId ?? "bubble";
       const radius = ent.radius ?? 8;
@@ -756,6 +774,12 @@ export class ArenaScene {
       this.projectiles.delete(id);
       return;
     }
+    const ink = this.inkBlobs.get(id);
+    if (ink) {
+      ink.destroy();
+      this.inkBlobs.delete(id);
+      return;
+    }
   }
 
   private tick = () => {
@@ -797,6 +821,7 @@ export class ArenaScene {
       const py = p.prevY + (p.nextY - p.prevY) * t;
       p.sprite.setTransform(px, py, p.vx, p.vy);
     }
+    for (const blob of this.inkBlobs.values()) blob.update(now);
     projSpan.end();
 
     // Lightning bolts (radial-pulse / eel): short-lived, re-anchored each frame to the
@@ -1255,6 +1280,7 @@ export class ArenaScene {
     for (const p of this.pellets.values()) p.gfx.destroy();
     for (const c of this.chunks.values()) c.gfx.destroy();
     for (const pr of this.projectiles.values()) pr.sprite.destroy();
+    for (const blob of this.inkBlobs.values()) blob.destroy();
     for (const eff of this.zaps) eff.destroy();
     for (const g of this.mouthIndicators.values()) g.destroy();
     this.particles.destroy();
@@ -1262,6 +1288,7 @@ export class ArenaScene {
     this.pellets.clear();
     this.chunks.clear();
     this.projectiles.clear();
+    this.inkBlobs.clear();
     this.zaps.length = 0;
     this.mouthIndicators.clear();
     this.fishHeading.clear();

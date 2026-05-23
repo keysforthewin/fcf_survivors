@@ -101,3 +101,16 @@ Feature: XP and level progression
     When level-ups are processed
     Then "Alpha" is offered an evolution for "bubble"
     And "Alpha" is offered an evolution for "spine"
+
+  Scenario: Two ready evolutions are both shown with no duplicate cards
+    Given a player "Alpha" at (1000, 1000) with mass 10
+    And "Alpha" has weapon "bubble" at level 5
+    And "Alpha" has weapon "spine" at level 5
+    And "Alpha" has passive "magnet" at stack 3
+    And "Alpha" has passive "scales" at stack 5
+    And "Alpha" has passive "teeth" at stack 5
+    And "Alpha" has accumulated 3 XP
+    When level-ups are processed
+    Then "Alpha" is offered an evolution for "bubble"
+    And "Alpha" is offered an evolution for "spine"
+    And "Alpha" is offered no duplicate cards

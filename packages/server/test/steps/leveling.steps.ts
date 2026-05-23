@@ -128,3 +128,14 @@ Then(
     );
   }
 );
+
+Then("{string} is offered no duplicate cards", function (this: TestWorld, name: string) {
+  const f = tryFish(this.requireSim(), name);
+  assert.ok(f, `${name} missing`);
+  const ids = f.pendingLevelUp.map((c) => c.id);
+  assert.equal(
+    new Set(ids).size,
+    ids.length,
+    `Expected unique cards; got [${ids.join(", ")}]`
+  );
+});
