@@ -327,9 +327,10 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // Join/death events also push an immediate roster — see broadcastRoster() above.
     if (world.tick % 10 === 0) broadcastRoster();
 
-    // clear removed buffer + hit events now that all snapshots have been built
+    // clear removed buffer + hit/zap events now that all snapshots have been built
     world.removedIds.length = 0;
     world.hitEvents.length = 0;
+    world.zapEvents.length = 0;
   }, TICK.ms);
 
   // HTTP + WS server

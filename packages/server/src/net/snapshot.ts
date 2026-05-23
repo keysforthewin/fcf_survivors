@@ -1,4 +1,4 @@
-import type { EntityDelta, HitEvent, SnapshotMsg, YouPassiveSlot, YouWeaponSlot } from "@fcf/shared";
+import type { EntityDelta, HitEvent, SnapshotMsg, YouPassiveSlot, YouWeaponSlot, ZapEvent } from "@fcf/shared";
 import { MASS_DECAY, viewRadius, xpForLevel } from "@fcf/shared";
 import type { World } from "../sim/world.ts";
 import type { Fish, Projectile } from "../sim/entity.ts";
@@ -132,6 +132,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
   const pendingPicks = (self.pendingLevelUp.length > 0 ? 1 : 0) + self.queuedLevelUps;
 
   const hits = hitEventsFor(world, self, seen);
+  const zaps = zapsFor(world, self, seen);
 
   return {
     t: "snapshot",
@@ -158,6 +159,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     entities,
     removed,
     ...(hits.length > 0 ? { hits } : {}),
+    ...(zaps.length > 0 ? { zaps } : {}),
   };
 }
 
@@ -178,6 +180,23 @@ function hitEventsFor(world: World, self: Fish | null, seen: Set<number>): HitEv
       targetId: e.targetId,
       byOwner: self !== null && e.ownerId === self.id,
     });
+  }
+  return out;
+}
+
+/**
+ * Per-socket zap-event filter: include a zap when its firing fish or any struck fish
+ * is visible to this socket. All nodes are sent so the bolt path stays complete even
+ * when an intermediate fish is just out of view.
+ */
+function zapsFor(world: World, self: Fish | null, seen: Set<number>): ZapEvent[] {
+  if (world.zapEvents.length === 0) return [];
+  const out: ZapEvent[] = [];
+  for (const z of world.zapEvents) {
+    const ownerId = z.nodes[0]?.id;
+    const byOwner = self !== null && ownerId === self.id;
+    if (!byOwner && !z.nodes.some((n) => seen.has(n.id))) continue;
+    out.push({ nodes: z.nodes, chain: z.chain, weaponId: z.weaponId, byOwner });
   }
   return out;
 }
@@ -235,6 +254,7 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
   }
 
   const hits = hitEventsFor(world, null, seen);
+  const zaps = zapsFor(world, null, seen);
 
   return {
     t: "snapshot",
@@ -245,5 +265,6 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     entities,
     removed,
     ...(hits.length > 0 ? { hits } : {}),
+    ...(zaps.length > 0 ? { zaps } : {}),
   };
 }

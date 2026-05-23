@@ -1,6 +1,6 @@
 import { AI, ARENA, FISH, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
-import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior, HitEventRecord } from "./entity.ts";
+import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
 import { maintainAiPopulation, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage } from "./weapon.ts";
@@ -31,6 +31,8 @@ export class World {
   removedIds: number[] = [];
   /** Hit events that occurred during the current tick. Drained by snapshot builder. */
   hitEvents: HitEventRecord[] = [];
+  /** Radial-pulse zap events that occurred during the current tick. Drained by snapshot builder. */
+  zapEvents: ZapEventRecord[] = [];
 
   private idCounter = 1;
   tick = 0;

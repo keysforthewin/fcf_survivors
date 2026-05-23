@@ -155,3 +155,13 @@ export interface HitEventRecord {
   targetId: EntityId;
   ownerId: EntityId;
 }
+
+/**
+ * Server-side record of a radial-pulse zap this tick. Snapshot builder turns this into
+ * ZapEvents per socket. nodes[0] is the firing fish; nodes[1..] are struck fish.
+ */
+export interface ZapEventRecord {
+  nodes: { id: EntityId; x: number; y: number }[];
+  chain: boolean;
+  weaponId: WeaponId;
+}

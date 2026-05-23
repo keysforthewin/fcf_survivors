@@ -47,6 +47,8 @@ export interface WeaponDef {
   kind: WeaponKind;
   /** Filled in only for evolution weapons. */
   evolutionOf?: WeaponId;
+  /** radial-pulse only: true = chain lightning (a path threaded through fish) instead of bolts radiating from the owner. */
+  chain?: boolean;
   /** Index 0 = level 1; we look up via `levels[level - 1]`. */
   levels: [WeaponLevel, WeaponLevel, WeaponLevel, WeaponLevel, WeaponLevel];
 }
@@ -147,7 +149,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   eel: {
     id: "eel", name: "Eel Storm", description: "Chain lightning to nearby fish.",
-    kind: "radial-pulse", evolutionOf: "pulse",
+    kind: "radial-pulse", evolutionOf: "pulse", chain: true,
     levels: [
       { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
       { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },

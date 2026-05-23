@@ -60,6 +60,37 @@ Feature: Weapon damage
     Then "Apex" has 2 weapon hits
     And "Apex" has dealt at least 2 damage
 
+  Scenario: A pulse emits a radial zap to every struck fish
+    # Same layout as the per-hit scenario above: both targets inside the 250
+    # pulse radius but beyond Apex's ~133 eat reach.
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "pulse" at level 1
+    And an AI fish "Left" at (3820, 4000) with mass 20
+    And an AI fish "Up" at (4000, 4180) with mass 20
+    When the world advances 1 tick
+    Then a zap event was emitted by "Apex"
+    And the zap is not a chain
+    And the zap strikes "Left" and "Up"
+
+  Scenario: An eel emits a chain zap ordered nearest-first
+    # Eel (pulseRadius 500) threads player -> nearest fish -> next nearest.
+    # Targets are stationary players beyond Apex's eat reach, 200 units apart.
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "eel" at level 1
+    And a player "Near" at (4000, 4160) with mass 20
+    And a player "Far" at (4000, 4360) with mass 20
+    When the world advances 1 tick
+    Then a zap event was emitted by "Apex"
+    And the zap is a chain
+    And the zap path is "Apex" then "Near" then "Far"
+
+  Scenario: A pulse with nothing in range emits no zap
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "pulse" at level 1
+    And an AI fish "FarOff" at (4400, 4000) with mass 10
+    When the world advances 1 tick
+    Then no zap event was emitted
+
   Scenario: Bubble Shot at L5 reaches targets a single L1 shot cannot
     # Apex is stationary; default heading (1,0) sends bubbles east.
     # Distant is 1000 units away — beyond a single L1 shot's travel (~836)

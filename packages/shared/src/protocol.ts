@@ -109,6 +109,22 @@ export interface HitEvent {
   byOwner: boolean;
 }
 
+/** Per-tick zap event: a radial-pulse weapon fired and struck fish. Drives lightning bolts. */
+export interface ZapEvent {
+  /**
+   * Bolt path. nodes[0] is the firing origin (the player); nodes[1..] are struck fish.
+   * Each node carries its entity id (so the client can track the live interpolated
+   * sprite) and a fallback position (server position at fire time).
+   */
+  nodes: { id: number; x: number; y: number }[];
+  /** false = radial bolts from nodes[0] to each other node; true = a connected chain. */
+  chain: boolean;
+  /** Weapon that fired ("pulse" | "eel") — selects bolt color. */
+  weaponId: string;
+  /** True when the receiving socket fired this zap. */
+  byOwner: boolean;
+}
+
 export interface YouWeaponSlot {
   id: string;
   level: number;
@@ -156,6 +172,8 @@ export interface SnapshotMsg {
   removed: number[];
   /** Hit events that occurred this tick and are visible to this socket. */
   hits?: HitEvent[];
+  /** Radial-pulse zap events this tick that are visible to this socket. */
+  zaps?: ZapEvent[];
 }
 
 export interface LevelUpCard {

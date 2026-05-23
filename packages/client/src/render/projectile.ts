@@ -26,7 +26,6 @@ export class ProjectileSprite {
   private weaponId: RenderableWeaponId;
   private radius: number;
   private spawnTime: number;
-  private currentAlpha = 1;
   private trailPoints: Point[] = [];
   private trailRope: MeshRope | null = null;
 
@@ -76,14 +75,6 @@ export class ProjectileSprite {
         color: this.weaponId === "kraken" ? 0x9a5fff : 0x60347e,
         quality: 0.18,
       });
-    } else if (this.weaponId === "pulse" || this.weaponId === "eel") {
-      glow = new GlowFilter({
-        distance: 10,
-        outerStrength: 1.8,
-        innerStrength: 0.4,
-        color: this.weaponId === "pulse" ? 0xb8e8ff : 0xe2c8ff,
-        quality: 0.18,
-      });
     }
     if (glow) {
       // Explicit padding so the glow halo is included in the filter's render
@@ -118,19 +109,6 @@ export class ProjectileSprite {
     }
   }
 
-  /** Per-frame: handles pulse alpha fade-out. Returns false if sprite should be removed early. */
-  tickAge(now: number, lifetimeMs: number | null): boolean {
-    if (this.weaponId === "pulse" || this.weaponId === "eel") {
-      const age = lifetimeMs ? Math.max(0, Math.min(1, (now - this.spawnTime) / lifetimeMs)) : 0;
-      const a = 1 - age;
-      if (Math.abs(a - this.currentAlpha) > 0.05) {
-        this.currentAlpha = a;
-        this.g.alpha = Math.max(0.0, a);
-      }
-    }
-    return true;
-  }
-
   private draw(): void {
     const g = this.g;
     g.clear();
@@ -148,12 +126,6 @@ export class ProjectileSprite {
           .closePath()
           .fill({ color: 0xffe884, alpha: 0.95 })
           .stroke({ color: 0xffb347, width: 1.5, alpha: 0.9 });
-        break;
-      }
-      case "pulse": {
-        g.circle(0, 0, r).fill({ color: 0x7fcfff, alpha: 0.15 });
-        g.circle(0, 0, r).stroke({ color: 0xb8e8ff, width: 4, alpha: 0.8 });
-        g.circle(0, 0, r * 0.7).stroke({ color: 0xffffff, width: 2, alpha: 0.5 });
         break;
       }
       case "ink": {
@@ -182,11 +154,6 @@ export class ProjectileSprite {
       case "puffer": {
         g.moveTo(r * 1.3, 0).lineTo(-r * 0.6, r * 0.55).lineTo(-r * 0.6, -r * 0.55).closePath()
           .fill({ color: 0xffe884, alpha: 0.95 }).stroke({ color: 0xff9020, width: 2, alpha: 0.95 });
-        break;
-      }
-      case "eel": {
-        g.circle(0, 0, r).fill({ color: 0xb088ff, alpha: 0.18 });
-        g.circle(0, 0, r).stroke({ color: 0xe2c8ff, width: 5, alpha: 0.9 });
         break;
       }
       case "kraken": {

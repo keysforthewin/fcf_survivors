@@ -1,7 +1,7 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
-import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg } from "@fcf/shared";
+import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
 import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon } from "@fcf/shared";
 import type { PassiveId, WeaponId } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
@@ -9,6 +9,7 @@ import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
+import { ZapEffect } from "../render/lightning.ts";
 import { ParticleSystem } from "../render/particles.ts";
 import { WaterCausticFilter } from "../render/water-filter.ts";
 import { mountLevelUp, type LevelUpMount } from "./level-up.ts";
@@ -111,6 +112,7 @@ export class ArenaScene {
   private pellets = new Map<number, PelletState>();
   private chunks = new Map<number, ChunkState>();
   private projectiles = new Map<number, ProjectileState>();
+  private zaps: ZapEffect[] = [];
   private selfId = 0;
   private serverNow = 0;
   private clientServerOffset = 0;
@@ -488,6 +490,17 @@ export class ArenaScene {
     if (msg.hits && msg.hits.length > 0) {
       for (const h of msg.hits) this.handleHitEvent(h, recvTime);
     }
+
+    if (msg.zaps && msg.zaps.length > 0) {
+      for (const z of msg.zaps) this.spawnZap(z, recvTime);
+    }
+  }
+
+  /** A radial-pulse weapon fired: spawn a short-lived lightning effect. */
+  private spawnZap(z: ZapEvent, now: number): void {
+    const eff = new ZapEffect(z, now);
+    this.projectileLayer.addChild(eff.container);
+    this.zaps.push(eff);
   }
 
   /** Hit marker: particles + sound + floating damage number; camera kick if we own the projectile or it landed on us. */
@@ -783,10 +796,26 @@ export class ArenaScene {
       const px = p.prevX + (p.nextX - p.prevX) * t;
       const py = p.prevY + (p.nextY - p.prevY) * t;
       p.sprite.setTransform(px, py, p.vx, p.vy);
-      // pulse rings fade out over their lifetime
-      p.sprite.tickAge(now, p.weaponId === "pulse" || p.weaponId === "eel" ? 280 : null);
     }
     projSpan.end();
+
+    // Lightning bolts (radial-pulse / eel): short-lived, re-anchored each frame to the
+    // live interpolated sprite of each node (player + struck fish) so they track movement.
+    if (this.zaps.length > 0) {
+      const resolve = (id: number, fallback: { x: number; y: number }) => {
+        const f = this.fishes.get(id);
+        return f ? { x: f.sprite.container.x, y: f.sprite.container.y } : fallback;
+      };
+      for (let i = this.zaps.length - 1; i >= 0; i--) {
+        const eff = this.zaps[i]!;
+        if (eff.expired(now)) {
+          eff.destroy();
+          this.zaps.splice(i, 1);
+        } else {
+          eff.update(now, resolve);
+        }
+      }
+    }
 
     // camera
     const screenW = this.app.renderer.width;
@@ -1226,12 +1255,14 @@ export class ArenaScene {
     for (const p of this.pellets.values()) p.gfx.destroy();
     for (const c of this.chunks.values()) c.gfx.destroy();
     for (const pr of this.projectiles.values()) pr.sprite.destroy();
+    for (const eff of this.zaps) eff.destroy();
     for (const g of this.mouthIndicators.values()) g.destroy();
     this.particles.destroy();
     this.fishes.clear();
     this.pellets.clear();
     this.chunks.clear();
     this.projectiles.clear();
+    this.zaps.length = 0;
     this.mouthIndicators.clear();
     this.fishHeading.clear();
     this.world.destroy({ children: true });

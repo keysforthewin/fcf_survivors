@@ -65,7 +65,7 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
         break;
       case "radial-pulse":
         if (now >= slot.cooldownReadyAt) {
-          firePulse(world, fish, slot, lvl, dmg, now);
+          firePulse(world, fish, slot, lvl, dmg, def.chain ?? false);
           slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
         }
         break;
@@ -125,29 +125,25 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
   const speed = lvl.speed ?? 360;
   const lifetimeMs = lvl.lifetimeMs ?? 600;
   const radius = lvl.radius ?? 6;
-  // Inherit forward momentum as a single uniform drift so the ring stays a true
-  // circle, but cap it below the spine speed so trailing spines still fly
-  // outward (rather than stalling and trailing into a comet shape at high speed).
-  const DRIFT_CAP = 1 / 3;     // leading spines end up ~2x the speed of trailing ones
+  // Only forward-facing spines inherit the fish's velocity, scaled by how much they
+  // point along it. Side and backward spines inherit none, so every spine always
+  // shoots away from the fish — the back ones fly out behind instead of being
+  // carried along with a fast-moving (e.g. boosting) fish.
   const vmag = Math.hypot(fish.vx, fish.vy);
-  let driftX = 0;
-  let driftY = 0;
-  if (vmag > 1) {
-    const drift = Math.min(vmag, speed * DRIFT_CAP);
-    driftX = (fish.vx / vmag) * drift;
-    driftY = (fish.vy / vmag) * drift;
-  }
+  const vhx = vmag > 1 ? fish.vx / vmag : 0;
+  const vhy = vmag > 1 ? fish.vy / vmag : 0;
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2;
     const dirX = Math.cos(a);
     const dirY = Math.sin(a);
+    const inherit = Math.max(0, dirX * vhx + dirY * vhy);   // 1 = with travel, 0 = side/behind
     world.spawnProjectile({
       ownerId: fish.id,
       weaponId: slot.id,
       x: fish.x + dirX * 8,
       y: fish.y + dirY * 8,
-      vx: dirX * speed + driftX,
-      vy: dirY * speed + driftY,
+      vx: dirX * speed + fish.vx * inherit,
+      vy: dirY * speed + fish.vy * inherit,
       damage,
       radius,
       expiresAt: now + lifetimeMs,
@@ -157,27 +153,14 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
   }
 }
 
-function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): void {
+function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, chain: boolean): void {
   const radius = lvl.pulseRadius ?? lvl.range;
-  const lifetimeMs = lvl.lifetimeMs ?? 200;
-  // Spawn a single static visualization projectile so the client can draw the ring.
-  world.spawnProjectile({
-    ownerId: fish.id,
-    weaponId: slot.id,
-    x: fish.x,
-    y: fish.y,
-    vx: 0,
-    vy: 0,
-    damage: 0,                    // damage applied inline below; vis projectile is harmless
-    radius,
-    expiresAt: now + lifetimeMs,
-    behavior: "static",
-    reHitMs: 1_000_000,           // never re-hits
-  });
 
-  // Apply damage to any fish in range. Self-damage is prevented by id check.
+  // Damage every fish in range (self-damage prevented by id check) and collect the
+  // struck fish so the client can draw a lightning bolt to each one.
   const scratch: Fish[] = [];
   world.fishHash.query(fish.x, fish.y, radius + MAX_FISH_RADIUS_PAD, scratch);
+  const struck: { id: number; x: number; y: number }[] = [];
   for (const target of scratch) {
     if (target.id === fish.id || !target.alive) continue;
     const dx = target.x - fish.x;
@@ -185,7 +168,53 @@ function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel,
     const reach = radius + fishRadius(target.mass);
     if (dx * dx + dy * dy > reach * reach) continue;
     applyHit(world, target, fish, damage);
+    struck.push({ id: target.id, x: target.x, y: target.y });
   }
+
+  // No fish hit → the pulse fires silently (no bolts).
+  if (struck.length === 0) return;
+
+  // Chain weapons (eel) thread the struck fish into a single path via greedy
+  // nearest-neighbor from the origin; radial weapons (pulse) leave order arbitrary.
+  const ordered = chain ? orderChain(fish.x, fish.y, struck) : struck;
+  world.zapEvents.push({
+    nodes: [
+      { id: fish.id, x: Math.round(fish.x), y: Math.round(fish.y) },
+      ...ordered.map((t) => ({ id: t.id, x: Math.round(t.x), y: Math.round(t.y) })),
+    ],
+    chain,
+    weaponId: slot.id,
+  });
+}
+
+/** Greedy nearest-neighbor ordering of struck fish, starting from the origin (ox, oy). */
+function orderChain(
+  ox: number,
+  oy: number,
+  struck: { id: number; x: number; y: number }[],
+): { id: number; x: number; y: number }[] {
+  const remaining = struck.slice();
+  const ordered: { id: number; x: number; y: number }[] = [];
+  let cx = ox;
+  let cy = oy;
+  while (remaining.length > 0) {
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const dx = remaining[i]!.x - cx;
+      const dy = remaining[i]!.y - cy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    const next = remaining.splice(bestI, 1)[0]!;
+    ordered.push(next);
+    cx = next.x;
+    cy = next.y;
+  }
+  return ordered;
 }
 
 function tickTrail(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): void {
