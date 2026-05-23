@@ -125,6 +125,18 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
   const speed = lvl.speed ?? 360;
   const lifetimeMs = lvl.lifetimeMs ?? 600;
   const radius = lvl.radius ?? 6;
+  // Inherit forward momentum as a single uniform drift so the ring stays a true
+  // circle, but cap it below the spine speed so trailing spines still fly
+  // outward (rather than stalling and trailing into a comet shape at high speed).
+  const DRIFT_CAP = 1 / 3;     // leading spines end up ~2x the speed of trailing ones
+  const vmag = Math.hypot(fish.vx, fish.vy);
+  let driftX = 0;
+  let driftY = 0;
+  if (vmag > 1) {
+    const drift = Math.min(vmag, speed * DRIFT_CAP);
+    driftX = (fish.vx / vmag) * drift;
+    driftY = (fish.vy / vmag) * drift;
+  }
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2;
     const dirX = Math.cos(a);
@@ -134,9 +146,8 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
       weaponId: slot.id,
       x: fish.x + dirX * 8,
       y: fish.y + dirY * 8,
-      // Inherit shooter's velocity so the ring drifts with a moving fish.
-      vx: dirX * speed + fish.vx,
-      vy: dirY * speed + fish.vy,
+      vx: dirX * speed + driftX,
+      vy: dirY * speed + driftY,
       damage,
       radius,
       expiresAt: now + lifetimeMs,
@@ -208,7 +219,10 @@ function ensureTrailState(slot: WeaponSlot): TrailState {
 function tickOrbital(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): void {
   const state = ensureOrbitalState(slot);
   const count = lvl.count ?? 2;
-  const orbitR = lvl.range;
+  // Keep the piranhas a fixed clearance outside the body so they don't sink into
+  // a large fish. Recomputed each tick so the orbit widens as the player grows.
+  const ORBIT_GAP = 50;
+  const orbitR = Math.max(lvl.range, fishRadius(fish.mass) + ORBIT_GAP);
   const angular = lvl.intervalMs ?? 3.0;     // rad/sec
   const radius = lvl.radius ?? 14;
 
@@ -254,8 +268,8 @@ function tickOrbital(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLeve
     const proj = world.projectiles.get(pid);
     if (!proj) continue;
     const a = state.phase + (proj.orbitPhase ?? 0);
-    proj.x = fish.x + Math.cos(a) * (proj.orbitRadius ?? orbitR);
-    proj.y = fish.y + Math.sin(a) * (proj.orbitRadius ?? orbitR);
+    proj.x = fish.x + Math.cos(a) * orbitR;
+    proj.y = fish.y + Math.sin(a) * orbitR;
     proj.damage = damage;
     proj.radius = radius;
     proj.reHitMs = lvl.reHitMs ?? 500;

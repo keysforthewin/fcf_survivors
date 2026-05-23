@@ -18,15 +18,17 @@ export function showDeath(
         <button class="hud-gear death-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
         <h1>You were eaten by ${escapeHtml(eaten.byName)}</h1>
         <p class="subtitle">It tasted like victory. For them.</p>
-        <div class="death-stats">
-          <div class="death-stat"><span class="label">Peak mass</span><span class="value">${Math.floor(eaten.peakMass)}</span></div>
-          <div class="death-stat"><span class="label">Kills</span><span class="value">${eaten.kills}</span></div>
-          <div class="death-stat"><span class="label">Hits</span><span class="value">${eaten.hits}</span></div>
-          <div class="death-stat"><span class="label">Damage</span><span class="value">${formatStat(eaten.damage)}</span></div>
-          <div class="death-stat"><span class="label">Level</span><span class="value">${eaten.finalLevel}</span></div>
-          <div class="death-stat"><span class="label">Time</span><span class="value">${formatDuration(eaten.durationMs)}</span></div>
+        <div class="death-columns">
+          <div class="death-stats">
+            <div class="death-stat"><span class="label">Peak mass</span><span class="value">${Math.floor(eaten.peakMass)}</span></div>
+            <div class="death-stat"><span class="label">Kills</span><span class="value">${eaten.kills}</span></div>
+            <div class="death-stat"><span class="label">Hits</span><span class="value">${eaten.hits}</span></div>
+            <div class="death-stat"><span class="label">Damage</span><span class="value">${formatStat(eaten.damage)}</span></div>
+            <div class="death-stat"><span class="label">Level</span><span class="value">${eaten.finalLevel}</span></div>
+            <div class="death-stat"><span class="label">Time</span><span class="value">${formatDuration(eaten.durationMs)}</span></div>
+          </div>
+          ${renderBuild(eaten)}
         </div>
-        ${renderBuild(eaten)}
         <div class="leaderboard">
           <div class="leaderboard-tabs">
             ${SORT_KEYS.map((k, i) => `

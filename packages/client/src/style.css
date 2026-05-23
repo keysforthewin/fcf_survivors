@@ -113,6 +113,12 @@ canvas {
   position: relative;
 }
 
+/* Death card is roughly twice as wide so stats + arsenal sit side-by-side and the
+   high-scores list has room to show every row. Title card stays narrow. */
+.death-card {
+  width: min(860px, 94vw);
+}
+
 .death-gear {
   position: absolute;
   top: 14px;
@@ -667,12 +673,22 @@ button.play:active { transform: translateY(0); }
   font-size: 1.6rem;
 }
 
+/* Stats grid and arsenal/build summary share one row on the wide death card. */
+.death-columns {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  margin: 1rem 0 1.25rem;
+}
+
 .death-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.8rem;
-  margin: 1rem 0 1.5rem;
 }
+
+.death-columns .death-stats { flex: 1; }
+.death-columns .death-build { flex: 1; margin: 0; }
 
 .death-stat {
   background: rgba(0,0,0,0.25);
@@ -695,7 +711,7 @@ button.play:active { transform: translateY(0); }
 
 .leaderboard {
   margin: 1rem 0;
-  max-height: 220px;
+  max-height: min(52vh, 480px);   /* tall enough for the full top-10; scrolls only if needed */
   overflow-y: auto;
 }
 
