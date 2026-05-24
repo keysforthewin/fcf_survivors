@@ -1,8 +1,8 @@
-import { Application, BlurFilter, Container, Graphics } from "pixi.js";
+import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon } from "@fcf/shared";
+import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -48,6 +48,13 @@ interface PelletState {
   gfx: Graphics;
 }
 
+interface FruitState {
+  id: number;
+  x: number;
+  y: number;
+  container: Container;
+}
+
 interface ChunkState {
   id: number;
   prevX: number;
@@ -80,6 +87,18 @@ interface ProjectileState {
 
 const INTERP_DELAY_MS = 100;
 
+/** Emoji used for fruit pickups — kind is purely cosmetic, chosen per-fruit by id. */
+const FRUIT_EMOJI = [
+  "🍎","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍒","🍑",
+  "🥭","🍍","🥥","🥝","🍏","🍐","🍈","🍅","🫒","🥑",
+];
+/** Spread consecutive entity ids across the emoji list so neighbours differ. */
+function fruitEmojiFor(id: number): string {
+  let h = Math.imul(id, 2654435761);
+  h ^= h >>> 15;
+  return FRUIT_EMOJI[(h >>> 0) % FRUIT_EMOJI.length]!;
+}
+
 export interface ArenaCallbacks {
   onDeath(msg: EatenMsg): void;
   onLeaderboard(msg: LeaderboardMsg): void;
@@ -99,6 +118,7 @@ export class ArenaScene {
   private hitFlashUntil = 0;
   private hitFlashActive = false;
   pelletLayer = new Container();
+  fruitLayer = new Container();
   inkLayer = new Container();
   projectileLayer = new Container();
   chunkLayer = new Container();
@@ -112,6 +132,7 @@ export class ArenaScene {
   private input = createInput();
   private fishes = new Map<number, FishState>();
   private pellets = new Map<number, PelletState>();
+  private fruits = new Map<number, FruitState>();
   private chunks = new Map<number, ChunkState>();
   private projectiles = new Map<number, ProjectileState>();
   private inkBlobs = new Map<number, InkBlob>();
@@ -130,6 +151,8 @@ export class ArenaScene {
   private youWeapons: YouWeaponSlot[] = [];
   private youPassives: YouPassiveSlot[] = [];
   private youPendingPicks = 0;
+  private youRerolls = 0;
+  private youBanishes = 0;
   private skillPanel: SkillPanelMount | null = null;
   private destroyed = false;
   private userZoomTarget = 1;
@@ -196,6 +219,7 @@ export class ArenaScene {
     this.world.addChild(this.bg);
     this.world.addChild(this.causticsLayer);
     this.world.addChild(this.pelletLayer);
+    this.world.addChild(this.fruitLayer);
     this.world.addChild(this.inkLayer);
     this.world.addChild(this.projectileLayer);
     this.world.addChild(this.chunkLayer);
@@ -447,6 +471,10 @@ export class ArenaScene {
       this.youWeapons = msg.you.weapons;
       this.youPassives = msg.you.passives ?? [];
       this.youPendingPicks = msg.you.pendingPicks ?? 0;
+      this.youRerolls = msg.you.rerolls ?? 0;
+      this.youBanishes = msg.you.banishes ?? 0;
+      // Keep the open modal's button visibility live as fruit is collected.
+      this.levelUpMount?.setCurrency(this.youRerolls, this.youBanishes);
       if (massBefore >= 0 && msg.you.mass - massBefore > 4) {
         // big mass jump means we ate a fish
         snd.playEat(msg.you.mass);
@@ -485,6 +513,7 @@ export class ArenaScene {
       switch (ent.kind) {
         case "fish": this.applyFishDelta(ent, recvTime); break;
         case "pellet": this.applyPelletDelta(ent); break;
+        case "fruit": this.applyFruitDelta(ent); break;
         case "chunk": this.applyChunkDelta(ent, recvTime); break;
         case "projectile": this.applyProjectileDelta(ent, recvTime); break;
       }
@@ -671,6 +700,23 @@ export class ArenaScene {
     }
   }
 
+  private applyFruitDelta(ent: EntityDelta): void {
+    let fr = this.fruits.get(ent.id);
+    if (!fr) {
+      const container = new Container();
+      const label = new Text({ text: fruitEmojiFor(ent.id), style: { fontSize: 78, align: "center" } });
+      label.anchor.set(0.5);
+      container.addChild(label);
+      container.x = ent.x;
+      container.y = ent.y;
+      this.fruitLayer.addChild(container);
+      this.fruits.set(ent.id, { id: ent.id, x: ent.x, y: ent.y, container });
+    } else {
+      fr.container.x = ent.x;
+      fr.container.y = ent.y;
+    }
+  }
+
   private applyChunkDelta(ent: EntityDelta, recvTime: number): void {
     let c = this.chunks.get(ent.id);
     const now = recvTime;
@@ -760,6 +806,12 @@ export class ArenaScene {
     if (p) {
       p.gfx.destroy();
       this.pellets.delete(id);
+      return;
+    }
+    const fr = this.fruits.get(id);
+    if (fr) {
+      fr.container.destroy({ children: true });
+      this.fruits.delete(id);
       return;
     }
     const c = this.chunks.get(id);
@@ -917,6 +969,7 @@ export class ArenaScene {
 
     perf.setCount("fish", this.fishes.size);
     perf.setCount("pellets", this.pellets.size);
+    perf.setCount("fruits", this.fruits.size);
     perf.setCount("chunks", this.chunks.size);
     perf.setCount("projectiles", this.projectiles.size);
     perf.frame();
@@ -929,8 +982,21 @@ export class ArenaScene {
     const pickPending = this.youPendingPicks > 0;
     const dismissed = this.levelUpMount?.isDismissed() ?? false;
     this.hud.skillHint.classList.toggle("hidden", !(pickPending && dismissed));
+    // Evolution-pair hint: a weapon + its paired passive (owned at any level) form
+    // an evolution route — glitter both pips so the player knows the combo is special.
+    const ownedPassives = new Set(this.youPassives.map((p) => p.id));
+    const evoPairWeapons = new Set<string>();
+    const evoPairPassives = new Set<string>();
+    for (const w of this.youWeapons) {
+      const evo = EVOLUTIONS[w.id];
+      if (evo && ownedPassives.has(evo.passive)) {
+        evoPairWeapons.add(w.id);
+        evoPairPassives.add(evo.passive);
+      }
+    }
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i]!;
+      slot.root.classList.remove("evo-pair");
       if (i < wpnCount) {
         const wpn = this.youWeapons[i]!;
         const def = WEAPONS[wpn.id as keyof typeof WEAPONS];
@@ -946,6 +1012,7 @@ export class ArenaScene {
         slot.icon.textContent = weaponGlyph(wpn.id);
         slot.icon.style.color = weaponColor(wpn.id);
         slot.label.textContent = isEvolutionWeapon(wpn.id as any) ? "E" : `L${wpn.level}`;
+        slot.root.classList.toggle("evo-pair", evoPairWeapons.has(wpn.id));
         const lvl = getWeaponLevel(wpn.id as any, wpn.level);
         const cd = lvl.cooldownMs > 0 ? lvl.cooldownMs : 0;
         // Clockwise clock-wipe overlay starting at 12 o'clock. pct = fraction of
@@ -989,6 +1056,7 @@ export class ArenaScene {
       slot.icon.textContent = passiveGlyph(p.id);
       slot.icon.style.color = passiveColor(p.id);
       slot.label.textContent = `${p.stack}/${def.maxStack}`;
+      slot.root.classList.toggle("evo-pair", evoPairPassives.has(p.id));
     }
   }
 
@@ -1018,6 +1086,11 @@ export class ArenaScene {
     let players = 0;
     for (const f of this.fishes.values()) if (!f.isAi) players++;
     this.hud.players.textContent = players.toString();
+    // re-roll / banish tokens — only shown when the player holds any.
+    this.hud.rerolls.textContent = this.youRerolls.toString();
+    this.hud.banishes.textContent = this.youBanishes.toString();
+    this.hud.rerollCell.style.display = this.youRerolls > 0 ? "" : "none";
+    this.hud.banishCell.style.display = this.youBanishes > 0 ? "" : "none";
   }
 
   /** Called when our fish dies. Switches to free-pan spectator with WASD pan + Space cycle. */
@@ -1278,6 +1351,7 @@ export class ArenaScene {
     this.input.teardown();
     for (const f of this.fishes.values()) f.sprite.destroy();
     for (const p of this.pellets.values()) p.gfx.destroy();
+    for (const fr of this.fruits.values()) fr.container.destroy({ children: true });
     for (const c of this.chunks.values()) c.gfx.destroy();
     for (const pr of this.projectiles.values()) pr.sprite.destroy();
     for (const blob of this.inkBlobs.values()) blob.destroy();
@@ -1286,6 +1360,7 @@ export class ArenaScene {
     this.particles.destroy();
     this.fishes.clear();
     this.pellets.clear();
+    this.fruits.clear();
     this.chunks.clear();
     this.projectiles.clear();
     this.inkBlobs.clear();
@@ -1324,6 +1399,10 @@ interface HudElements {
   skillSlots: SkillSlotEl[];
   skillHint: HTMLButtonElement;
   gear: HTMLElement;
+  rerolls: HTMLElement;
+  banishes: HTMLElement;
+  rerollCell: HTMLElement;
+  banishCell: HTMLElement;
 }
 
 function mountHud(): HudElements {
@@ -1334,6 +1413,8 @@ function mountHud(): HudElements {
         <div class="hud-stat">
           <div><div class="label">Mass</div><div class="value" data-mass>10</div></div>
           <div><div class="label">Level</div><div class="value" data-level>1</div></div>
+          <div class="hud-token reroll" data-reroll-cell style="display:none"><div class="label">Re-roll</div><div class="value" data-rerolls>0</div></div>
+          <div class="hud-token banish" data-banish-cell style="display:none"><div class="label">Banish</div><div class="value" data-banishes>0</div></div>
         </div>
       </div>
       <div class="hud-right">
@@ -1375,6 +1456,10 @@ function mountHud(): HudElements {
     skillSlots,
     skillHint: root.querySelector("[data-skill-hint]") as HTMLButtonElement,
     gear: root.querySelector("[data-gear]") as HTMLElement,
+    rerolls: root.querySelector("[data-rerolls]") as HTMLElement,
+    banishes: root.querySelector("[data-banishes]") as HTMLElement,
+    rerollCell: root.querySelector("[data-reroll-cell]") as HTMLElement,
+    banishCell: root.querySelector("[data-banish-cell]") as HTMLElement,
   };
 }
 
@@ -1431,15 +1516,15 @@ function passiveColor(id: string): string {
 
 function weaponColor(id: string): string {
   switch (id) {
-    case "bubble":  return "#b6ecff";
+    case "bubble":  return "#e6c34a";
     case "spine":   return "#ffe884";
     case "pulse":   return "#7fcfff";
-    case "ink":     return "#bf94e6";
+    case "ink":     return "#78dc3c";
     case "piranha": return "#ff9070";
-    case "tidal":   return "#7fdfff";
+    case "tidal":   return "#ffd24a";
     case "puffer":  return "#ffe884";
     case "eel":     return "#b088ff";
-    case "kraken":  return "#9a5fff";
+    case "kraken":  return "#96f550";
     case "school":  return "#ff6f30";
     default:        return "#ffffff";
   }

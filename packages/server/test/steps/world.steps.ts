@@ -16,7 +16,7 @@ function ensureSim(self: TestWorld, seed = 1): TestSim {
   return self.sim;
 }
 
-function addFish(sim: TestSim, seed: FishSeed): Fish {
+export function addFish(sim: TestSim, seed: FishSeed): Fish {
   const id = sim.world.nextId();
   const mass = seed.mass ?? 10;
   const fish: Fish = {
@@ -52,6 +52,9 @@ function addFish(sim: TestSim, seed: FishSeed): Fish {
     queuedLevelUps: 0,
     levelUpDismissed: false,
     pendingLevelUpDrawId: 0,
+    rerollsRemaining: 0,
+    banishesRemaining: 0,
+    banishedSubjects: new Set(),
   };
   if (seed.isAi) {
     const aiState: AiState = {
@@ -369,6 +372,30 @@ Then(
   function (this: TestWorld, expected: number) {
     const n = this.requireSim().world.chunks.size;
     assert.ok(n >= expected, `Expected ≥${expected} chunks, got ${n}`);
+  }
+);
+
+Then(
+  "there are {int} projectile(s)",
+  function (this: TestWorld, expected: number) {
+    const n = this.requireSim().world.projectiles.size;
+    assert.equal(n, expected, `Expected ${expected} projectiles, got ${n}`);
+  }
+);
+
+Then(
+  "there are at most {int} projectile(s)",
+  function (this: TestWorld, expected: number) {
+    const n = this.requireSim().world.projectiles.size;
+    assert.ok(n <= expected, `Expected ≤${expected} projectiles, got ${n}`);
+  }
+);
+
+Then(
+  "there are at least {int} projectile(s)",
+  function (this: TestWorld, expected: number) {
+    const n = this.requireSim().world.projectiles.size;
+    assert.ok(n >= expected, `Expected ≥${expected} projectiles, got ${n}`);
   }
 );
 

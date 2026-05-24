@@ -30,6 +30,19 @@ export const PELLET = {
   radius: 6,
 } as const;
 
+/**
+ * Fruit are rarer, bigger "super pellets" that also drop a reroll/banish token
+ * for the level-up modal. ~3-4x a pellet in size and food value.
+ */
+export const FRUIT = {
+  massGain: 10,       // worth 10 pellets (pellet = 1)
+  xpGain: 10,         // worth 10 pellets
+  targetCount: 2,     // only ever 2 on the map at once
+  spawnPerTick: 1,
+  radius: 36,         // pickup hitbox sized to the big fruit icon
+  rerollChance: 0.5,  // P(reward = reroll); else banish
+} as const;
+
 export const AI = {
   minPopulation: 20,
   startMassMin: 5,

@@ -1,8 +1,8 @@
-import { AI, ARENA, FISH, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, xpDroppedOnDeath } from "@fcf/shared";
+import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
-import type { Fish, Pellet, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
+import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
-import { maintainAiPopulation, updateAi } from "./ai.ts";
+import { maintainAiPopulation, pickAiName, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage } from "./weapon.ts";
 import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass } from "./passives.ts";
 
@@ -26,6 +26,7 @@ export interface WorldDeps {
 export class World {
   fish = new Map<number, Fish>();
   pellets = new Map<number, Pellet>();
+  fruits = new Map<number, Fruit>();
   chunks = new Map<number, Chunk>();
   projectiles = new Map<number, Projectile>();
   removedIds: number[] = [];
@@ -47,6 +48,7 @@ export class World {
   // spatial hash for collision queries (rebuilt each tick)
   fishHash = new SpatialHash<Fish>(256);
   pelletHash = new SpatialHash<Pellet>(128);
+  fruitHash = new SpatialHash<Fruit>(128);
   chunkHash = new SpatialHash<Chunk>(128);
   projectileHash = new SpatialHash<Projectile>(128);
 
@@ -97,9 +99,47 @@ export class World {
       queuedLevelUps: 0,
       levelUpDismissed: false,
       pendingLevelUpDrawId: 0,
+      rerollsRemaining: 0,
+      banishesRemaining: 0,
+      banishedSubjects: new Set(),
     };
     this.fish.set(fish.id, fish);
     return fish;
+  }
+
+  /**
+   * Every name currently in use by a live fish — humans and NPCs alike. The
+   * AI-name picker avoids this set so no two NPCs ever share a name and no NPC
+   * collides with a human.
+   */
+  takenNames(): Set<string> {
+    const names = new Set<string>();
+    for (const f of this.fish.values()) {
+      if (f.alive) names.add(f.name);
+    }
+    return names;
+  }
+
+  /**
+   * Humans get priority over AI fish names. After a human claims `name`, rename
+   * any live AI fish currently using it so no NPC shares a human's name. The
+   * replacement avoids every live human name (not just `name`), so eviction
+   * never just shuffles the collision onto another player. Returns the ids of
+   * renamed fish so the caller can re-propagate them to clients.
+   */
+  claimHumanName(name: string): number[] {
+    const renamed: number[] = [];
+    const taken = this.takenNames();
+    taken.add(name);
+    for (const f of this.fish.values()) {
+      if (f.alive && f.isAi && f.name === name) {
+        const newName = pickAiName(this.rng, taken);
+        f.name = newName;
+        taken.add(newName);
+        renamed.push(f.id);
+      }
+    }
+    return renamed;
   }
 
   removeFish(id: number): void {
@@ -108,6 +148,10 @@ export class World {
 
   removePellet(id: number): void {
     if (this.pellets.delete(id)) this.removedIds.push(id);
+  }
+
+  removeFruit(id: number): void {
+    if (this.fruits.delete(id)) this.removedIds.push(id);
   }
 
   removeChunk(id: number): void {
@@ -181,6 +225,18 @@ export class World {
     return p;
   }
 
+  spawnFruit(): Fruit {
+    const f: Fruit = {
+      id: this.nextId(),
+      kind: "fruit",
+      x: this.rng() * ARENA.width,
+      y: this.rng() * ARENA.height,
+      reward: this.rng() < FRUIT.rerollChance ? "reroll" : "banish",
+    };
+    this.fruits.set(f.id, f);
+    return f;
+  }
+
   spawnChunk(x: number, y: number, mass: number, color: string, now: number): Chunk {
     const angle = this.rng() * Math.PI * 2;
     const speed = 80 + this.rng() * 60;
@@ -229,6 +285,12 @@ export class World {
         PELLET.targetCount - this.pellets.size,
       );
       while (toSpawn-- > 0) this.spawnPellet();
+      // fruit ride the same background-spawn switch (disabled together in tests)
+      let fruitToSpawn = Math.min(
+        FRUIT.spawnPerTick,
+        FRUIT.targetCount - this.fruits.size,
+      );
+      while (fruitToSpawn-- > 0) this.spawnFruit();
     }
 
     if (this.maintainAi) maintainAiPopulation(this);
@@ -292,10 +354,12 @@ export class World {
     // rebuild spatial hashes for collision
     this.fishHash.clear();
     this.pelletHash.clear();
+    this.fruitHash.clear();
     this.chunkHash.clear();
     this.projectileHash.clear();
     for (const f of this.fish.values()) if (f.alive) this.fishHash.insert(f.x, f.y, f);
     for (const p of this.pellets.values()) this.pelletHash.insert(p.x, p.y, p);
+    for (const fr of this.fruits.values()) this.fruitHash.insert(fr.x, fr.y, fr);
     for (const c of this.chunks.values()) this.chunkHash.insert(c.x, c.y, c);
     for (const p of this.projectiles.values()) this.projectileHash.insert(p.x, p.y, p);
 
@@ -323,6 +387,30 @@ export class World {
           f.mass += PELLET.massGain;
           f.mass = Math.min(f.mass, massCapFor(f.isAi));
           f.xp += f.isAi ? 1 : getPelletXp(1, f);
+        }
+      }
+    }
+
+    // collisions: PLAYERS eat fruit (bigger super-pellet + a reroll/banish token).
+    // AI skip fruit so they don't vacuum tokens off the map.
+    for (const f of this.fish.values()) {
+      if (!f.alive || f.isAi) continue;
+      const baseR = fishRadius(f.mass);
+      const pickupR = getPickupRadius(baseR, f);
+      scratch.length = 0;
+      this.fruitHash.query(f.x, f.y, pickupR + FRUIT.radius, scratch);
+      for (const fr of scratch as Fruit[]) {
+        const dx = f.x - fr.x;
+        const dy = f.y - fr.y;
+        if (dx * dx + dy * dy <= pickupR * pickupR) {
+          this.removeFruit(fr.id);
+          f.mass += FRUIT.massGain;
+          f.mass = Math.min(f.mass, massCapFor(f.isAi));
+          f.xp += getPelletXp(FRUIT.xpGain, f);
+          if (fr.reward === "reroll") f.rerollsRemaining += 1;
+          else f.banishesRemaining += 1;
+          // Immediately respawn a replacement elsewhere (keeps the map at the cap).
+          if (this.autoSpawnPellets) this.spawnFruit();
         }
       }
     }

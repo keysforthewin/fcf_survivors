@@ -87,6 +87,18 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     }
   }
 
+  for (const fr of world.fruits.values()) {
+    const dx = fr.x - self.x;
+    const dy = fr.y - self.y;
+    if (dx * dx + dy * dy > r2) continue;
+    seen.add(fr.id);
+    const prev = view.prevSent.get(fr.id);
+    if (!prev) {
+      entities.push({ id: fr.id, kind: "fruit", x: Math.round(fr.x), y: Math.round(fr.y), reward: fr.reward });
+      view.prevSent.set(fr.id, { kind: "fruit", x: fr.x, y: fr.y });
+    }
+  }
+
   for (const c of world.chunks.values()) {
     const dx = c.x - self.x;
     const dy = c.y - self.y;
@@ -155,6 +167,8 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       weapons,
       passives,
       pendingPicks,
+      rerolls: self.rerollsRemaining,
+      banishes: self.banishesRemaining,
     },
     entities,
     removed,
@@ -223,6 +237,15 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     if (!prev) {
       entities.push({ id: p.id, kind: "pellet", x: Math.round(p.x), y: Math.round(p.y), color: p.color });
       view.prevSent.set(p.id, { kind: "pellet", x: p.x, y: p.y });
+    }
+  }
+
+  for (const fr of world.fruits.values()) {
+    seen.add(fr.id);
+    const prev = view.prevSent.get(fr.id);
+    if (!prev) {
+      entities.push({ id: fr.id, kind: "fruit", x: Math.round(fr.x), y: Math.round(fr.y), reward: fr.reward });
+      view.prevSent.set(fr.id, { kind: "fruit", x: fr.x, y: fr.y });
     }
   }
 

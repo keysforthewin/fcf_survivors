@@ -16,6 +16,21 @@ export function serializeCardId(card: ParsedCardId): string {
   }
 }
 
+/**
+ * The "subject" a card relates to — used as the key for per-life banishing.
+ * weapon-add / weapon-upgrade collapse to the same weapon line so banishing any
+ * bubble card bans the whole bubble line. Evolutions key separately (`evo:`) so
+ * banishing an evolution doesn't ban/strip the still-useful Lv5 base weapon.
+ */
+export function cardSubject(card: ParsedCardId): string {
+  switch (card.kind) {
+    case "weapon-add":
+    case "weapon-upgrade": return `weapon:${card.weaponId}`;
+    case "evolution":      return `evo:${card.baseId}`;
+    case "passive-stack":  return `passive:${card.passiveId}`;
+  }
+}
+
 export function parseCardId(id: string): ParsedCardId | null {
   const parts = id.split(":");
   if (parts.length < 2) return null;

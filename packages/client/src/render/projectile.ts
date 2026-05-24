@@ -6,18 +6,21 @@ export type RenderableWeaponId =
   | "tidal" | "puffer" | "eel" | "kraken" | "school";
 
 // Per-weapon ribbon trail color (only weapons that actually travel get a trail).
+// AK-47 / P4uly's Gun fire bullets, so their trails read as warm muzzle tracers.
 const TRAIL_COLORS: Record<string, { rgb: [number, number, number]; alpha: number; len: number }> = {
-  bubble: { rgb: [0.71, 0.93, 1.00], alpha: 0.28, len: 4 },
-  tidal:  { rgb: [0.50, 0.87, 1.00], alpha: 0.55, len: 6 },
+  bubble: { rgb: [1.00, 0.82, 0.40], alpha: 0.40, len: 5 },
+  tidal:  { rgb: [1.00, 0.66, 0.28], alpha: 0.60, len: 7 },
   spine:  { rgb: [1.00, 0.91, 0.52], alpha: 0.55, len: 5 },
   piranha:{ rgb: [1.00, 0.56, 0.44], alpha: 0.55, len: 6 },
   school: { rgb: [1.00, 0.50, 0.19], alpha: 0.60, len: 6 },
 };
 
-// Visual radius is decoupled from collision radius — projectiles that read as
-// too bulky (the default bubble) can render smaller without changing damage.
+// Visual radius is decoupled from collision radius — projectiles render at a
+// size that reads well regardless of their hit radius. AK-47 / P4uly's Gun read
+// as big, chunky bullets.
 const VISUAL_RADIUS_SCALE: Record<string, number> = {
-  bubble: 0.55,
+  bubble: 0.95,
+  tidal: 1.15,
 };
 
 export class ProjectileSprite {
@@ -60,11 +63,12 @@ export class ProjectileSprite {
         quality: 0.18,
       });
     } else if (this.weaponId === "bubble" || this.weaponId === "tidal") {
+      // Warm gold muzzle glow for the bullet weapons.
       glow = new GlowFilter({
-        distance: this.weaponId === "bubble" ? 4 : 6,
-        outerStrength: this.weaponId === "bubble" ? 0.6 : 1.2,
+        distance: this.weaponId === "bubble" ? 5 : 7,
+        outerStrength: this.weaponId === "bubble" ? 1.0 : 1.4,
         innerStrength: 0.0,
-        color: 0xb6ecff,
+        color: 0xffd27f,
         quality: 0.18,
       });
     }
@@ -108,8 +112,7 @@ export class ProjectileSprite {
     const r = this.radius;
     switch (this.weaponId) {
       case "bubble": {
-        g.circle(0, 0, r).fill({ color: 0x7fc8ee, alpha: 0.45 }).stroke({ color: 0xb6ecff, width: 1, alpha: 0.55 });
-        g.circle(-r * 0.32, -r * 0.32, r * 0.28).fill({ color: 0xffffff, alpha: 0.28 });
+        drawBullet(g, r, { casing: 0xc8a951, outline: 0x8a6d1f, nose: 0xb87333 });
         break;
       }
       case "spine": {
@@ -131,7 +134,8 @@ export class ProjectileSprite {
       }
       // Evolutions — placeholder visuals; M4 will refine.
       case "tidal": {
-        g.circle(0, 0, r).fill({ color: 0x7fdfff, alpha: 0.85 }).stroke({ color: 0xffffff, width: 3, alpha: 0.9 });
+        // P4uly's Gun: a hotter, brighter bullet than the base AK-47.
+        drawBullet(g, r, { casing: 0xffd24a, outline: 0xc8881a, nose: 0xff8c3a });
         break;
       }
       case "puffer": {
@@ -149,6 +153,39 @@ export class ProjectileSprite {
   destroy(): void {
     this.container.destroy({ children: true });
   }
+}
+
+/**
+ * Draw a chunky bullet pointing along local +X (the sprite container is rotated
+ * to face velocity, so +X is the travel direction). A brass casing with a
+ * pointed copper nose and a bright highlight streak along the top.
+ */
+function drawBullet(
+  g: Graphics,
+  r: number,
+  c: { casing: number; outline: number; nose: number },
+): void {
+  const halfH = r * 0.5;        // bullet half-height
+  const backX = -r;             // rear of the casing
+  const shoulderX = r * 0.25;   // where the casing meets the nose
+  const tipX = r * 1.05;        // nose tip
+
+  // Casing body (rounded-rear rectangle).
+  g.roundRect(backX, -halfH, shoulderX - backX, halfH * 2, halfH * 0.5)
+    .fill({ color: c.casing, alpha: 0.98 })
+    .stroke({ color: c.outline, width: 1, alpha: 0.9 });
+
+  // Pointed ogive nose.
+  g.moveTo(shoulderX, -halfH)
+    .lineTo(tipX, 0)
+    .lineTo(shoulderX, halfH)
+    .closePath()
+    .fill({ color: c.nose, alpha: 0.98 })
+    .stroke({ color: c.outline, width: 1, alpha: 0.9 });
+
+  // Highlight streak along the upper casing — sells the metallic sheen.
+  g.roundRect(backX + r * 0.18, -halfH * 0.62, (shoulderX - backX) * 0.7, halfH * 0.28, halfH * 0.14)
+    .fill({ color: 0xffffff, alpha: 0.4 });
 }
 
 const RIBBON_TEX_CACHE = new Map<string, Texture>();

@@ -1,6 +1,6 @@
 import { WEAPONS, getWeaponLevel, FISH, fishRadius } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
-import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState } from "./entity.ts";
+import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState } from "./entity.ts";
 import type { World } from "./world.ts";
 import { getWeaponDamageMult, getWeaponCooldownMult, getDamageTakenMult } from "./passives.ts";
 
@@ -57,12 +57,24 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
           slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
         }
         break;
-      case "radial-burst":
-        if (now >= slot.cooldownReadyAt) {
-          fireRadialBurst(world, fish, slot, lvl, dmg, now);
-          slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
+      case "radial-burst": {
+        // Turret: emit the ring one bullet at a time across SWEEP_MS rather than
+        // all at once. Start a sweep when the cooldown is up; keep ticking the
+        // active sweep regardless of cooldownReadyAt until the ring completes.
+        if (slot.state?.kind !== "burst-sweep" && now >= slot.cooldownReadyAt) {
+          slot.state = { kind: "burst-sweep", startedAt: now, firedCount: 0 };
+        }
+        if (slot.state?.kind === "burst-sweep") {
+          const startedAt = slot.state.startedAt;
+          if (tickBurstSweep(world, fish, slot, lvl, dmg, now)) {
+            slot.state = undefined;
+            // Re-arm relative to the ring's start so the firing cadence matches
+            // the per-level cooldown (cooldownMs >> SWEEP_MS, so always >0).
+            slot.cooldownReadyAt = startedAt + lvl.cooldownMs * cdMult;
+          }
         }
         break;
+      }
       case "radial-pulse":
         if (now >= slot.cooldownReadyAt) {
           firePulse(world, fish, slot, lvl, dmg, def.chain ?? false);
@@ -120,11 +132,27 @@ function fireLinear(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel
   }
 }
 
-function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): void {
+/** Bullets in a Turret ring are spread evenly across this window (ms). */
+const SWEEP_MS = 1000;
+
+/**
+ * Advance an in-progress Turret sweep: emit every bullet that has come due since
+ * the last tick. Bullet `i` of `count` is due at `(i / count) * SWEEP_MS` into the
+ * ring, so the ring sweeps a full circle over ~SWEEP_MS. Returns true once the
+ * whole ring has fired.
+ */
+function tickBurstSweep(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): boolean {
+  const state = slot.state as BurstSweepState;
   const count = lvl.count ?? 8;
   const speed = lvl.speed ?? 360;
   const lifetimeMs = lvl.lifetimeMs ?? 600;
   const radius = lvl.radius ?? 6;
+
+  // How many bullets should have fired by now: bullet 0 is due immediately, so
+  // the +1 fires the first bullet on the sweep's opening tick (no dead frame).
+  const frac = Math.min(1, (now - state.startedAt) / SWEEP_MS);
+  const due = Math.min(count, Math.floor(frac * count) + 1);
+
   // Only forward-facing spines inherit the fish's velocity, scaled by how much they
   // point along it. Side and backward spines inherit none, so every spine always
   // shoots away from the fish — the back ones fly out behind instead of being
@@ -132,7 +160,8 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
   const vmag = Math.hypot(fish.vx, fish.vy);
   const vhx = vmag > 1 ? fish.vx / vmag : 0;
   const vhy = vmag > 1 ? fish.vy / vmag : 0;
-  for (let i = 0; i < count; i++) {
+
+  for (let i = state.firedCount; i < due; i++) {
     const a = (i / count) * Math.PI * 2;
     const dirX = Math.cos(a);
     const dirY = Math.sin(a);
@@ -151,6 +180,8 @@ function fireRadialBurst(world: World, fish: Fish, slot: WeaponSlot, lvl: Weapon
       reHitMs: lvl.reHitMs ?? 0,
     });
   }
+  state.firedCount = due;
+  return state.firedCount >= count;
 }
 
 function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, chain: boolean): void {

@@ -1,7 +1,7 @@
 import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
 import { ARENA, TICK } from "@fcf/shared";
 import { World, type WorldDeps } from "./sim/world.ts";
-import { processLevelUps, applyCard } from "./sim/levelup.ts";
+import { processLevelUps, applyCard, rerollCard, banishCard } from "./sim/levelup.ts";
 import { discardWeapon, discardPassive } from "./sim/discard.ts";
 import { ClientView, buildSnapshot, buildSpectatorSnapshot } from "./net/snapshot.ts";
 import { topLeaderboard, writeScore, ensureMongo, type LeaderboardSort } from "./db/scores.ts";
@@ -86,6 +86,19 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       if (ws === exclude) continue;
       send(ws, msg);
     }
+  }
+
+  // A renamed fish needs every client to re-send its name on the next snapshot
+  // (buildSnapshot only emits name on first-seen). Used when a human claim
+  // evicts an NPC's name — all sockets must forget it, including the claimant's.
+  function repropagateFish(fishId: number): void {
+    for (const ws of sockets.values()) ws.data.view.prevSent.delete(fishId);
+  }
+
+  // Humans get priority over AI fish names: rename any NPC using `name` and
+  // re-propagate each renamed fish so clients pick up the new name.
+  function claimNameForHuman(name: string): void {
+    for (const id of world.claimHumanName(name)) repropagateFish(id);
   }
 
   function rosterForSocket(myFishId: number | null): RosterEntry[] {
@@ -304,6 +317,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         level: fish.level,
         cards: fish.pendingLevelUp,
         queued: fish.queuedLevelUps,
+        rerolls: fish.rerollsRemaining,
+        banishes: fish.banishesRemaining,
       };
       send(ws, msg);
       ws.data.levelUpSentDrawId = fish.pendingLevelUpDrawId;
@@ -386,6 +401,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           ws.data.startedAt = now;
           ws.data.name = name;
           ws.data.color = color;
+          claimNameForHuman(name);
           playerSessions.set(fish.id, { startedAt: now, ipHash: ipHash(ws.data.ip), disconnected: false });
           send(ws, {
             t: "welcome",
@@ -419,6 +435,22 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (ok) {
             ws.data.levelUpSentDrawId = null;
           }
+        } else if (msg.t === "rerollCard") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          if (fish.pendingLevelUp.length === 0) return;
+          // On success the draw id changed; clear the gate so the dispatch loop
+          // re-emits LevelUpMsg with the swapped card.
+          if (rerollCard(world, fish, msg.cardId)) ws.data.levelUpSentDrawId = null;
+        } else if (msg.t === "banishCard") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          if (fish.pendingLevelUp.length === 0) return;
+          if (banishCard(world, fish, msg.cardId)) ws.data.levelUpSentDrawId = null;
         } else if (msg.t === "discardWeapon") {
           const fid = ws.data.fishId;
           if (fid === null) return;
@@ -463,6 +495,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           ws.data.color = color;
           ws.data.isSpectator = false;
           ws.data.levelUpSentDrawId = null;
+          claimNameForHuman(name);
           playerSessions.set(fish.id, { startedAt: now, ipHash: ipHash(ws.data.ip), disconnected: false });
           send(ws, {
             t: "welcome",
@@ -480,7 +513,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           let changed = false;
           if (msg.name !== undefined) {
             const name = sanitizeName(msg.name);
-            if (name !== fish.name) { fish.name = name; ws.data.name = name; changed = true; }
+            if (name !== fish.name) { fish.name = name; ws.data.name = name; changed = true; claimNameForHuman(name); }
           }
           if (msg.color !== undefined) {
             const color = sanitizeColor(msg.color);

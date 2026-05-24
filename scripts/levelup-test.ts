@@ -77,11 +77,11 @@ pass = ok(applied, `applyCard returned true`) && pass;
 pass = ok(fish.pendingLevelUp.length === 0, `pendingLevelUp cleared`) && pass;
 pass = ok(before !== after, `fish state changed (before="${before}" after="${after}")`) && pass;
 
-// Force enough levels + max-stack Magnet Belly to test forced-evolution branch.
+// Force enough levels + max-stack Morning Raids to test forced-evolution branch.
 console.log("\n--- evolution gate test ---");
-// Give the player Bubble Shot Lv 5 (it's already Lv 1 by default; spawn function sets it).
+// Give the player AK-47 Lv 5 (it's already Lv 1 by default; spawn function sets it).
 fish.weapons[0]!.level = 5;
-// Max stack Magnet Belly (paired passive of bubble).
+// Max stack Morning Raids (paired passive of bubble).
 fish.passives.set("magnet", 3);
 fish.pendingLevelUp = [];
 fish.xp = xpForLevel(fish.level);
@@ -96,8 +96,8 @@ const evoParsed = parseCardId(evoCard.id)!;
 applyCard(world, fish, evoCard.id, evoParsed);
 const hasTidal = fish.weapons.some((s) => s.id === "tidal");
 const hasBubble = fish.weapons.some((s) => s.id === "bubble");
-pass = ok(hasTidal, `Bubble Shot evolved to Tidal Wave`) && pass;
-pass = ok(!hasBubble, `original Bubble Shot removed`) && pass;
+pass = ok(hasTidal, `AK-47 evolved to P4uly's Gun`) && pass;
+pass = ok(!hasBubble, `original AK-47 removed`) && pass;
 
 console.log(pass ? "\n✓ LEVELUP-TEST PASS" : "\n✗ LEVELUP-TEST FAIL");
 process.exit(pass ? 0 : 1);

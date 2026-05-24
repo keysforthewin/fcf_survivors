@@ -23,35 +23,35 @@ export interface PassiveDef {
 
 export const PASSIVES: Record<PassiveId, PassiveDef> = {
   fin: {
-    id: "fin",      name: "Fin Tuning",      description: "+10% move speed per stack.",
+    id: "fin",      name: "Rae's Horses",    description: "+10% move speed per stack.",
     maxStack: 5, perStack: 1.10, effect: "moveSpeedMult",
   },
   gulp: {
-    id: "gulp",     name: "Big Gulp",        description: "+15% XP from pellets.",
+    id: "gulp",     name: "Zunneh Base",     description: "+15% XP from pellets.",
     maxStack: 5, perStack: 1.15, effect: "pelletXpMult",
   },
   scales: {
-    id: "scales",   name: "Hearty Scales",   description: "-12% mass lost from hits per stack.",
+    id: "scales",   name: "Full Metal",      description: "-12% mass lost from hits per stack.",
     maxStack: 5, perStack: 0.88, effect: "damageTakenMult",
   },
   teeth: {
-    id: "teeth",    name: "Sharp Teeth",     description: "+15% weapon damage per stack.",
+    id: "teeth",    name: "Mmiguel's Aim",   description: "+15% weapon damage per stack.",
     maxStack: 5, perStack: 1.15, effect: "weaponDmgMult",
   },
   reflex: {
-    id: "reflex",   name: "Quick Reflex",    description: "−8% weapon cooldown per stack.",
+    id: "reflex",   name: "Trillian's Soul", description: "−8% weapon cooldown per stack.",
     maxStack: 5, perStack: 0.92, effect: "weaponCdMult",
   },
   magnet: {
-    id: "magnet",   name: "Magnet Belly",    description: "+50% pellet pickup radius per stack.",
+    id: "magnet",   name: "Morning Raids",   description: "+50% pellet pickup radius per stack.",
     maxStack: 3, perStack: 1.50, effect: "pickupMult",
   },
   recovery: {
-    id: "recovery", name: "Boost Recovery",  description: "−20% boost cooldown per stack (max −80%).",
+    id: "recovery", name: "Diesel Tax",      description: "−20% boost cooldown per stack (max −80%).",
     maxStack: 4, perStack: 0.80, effect: "boostCdMult",
   },
   hungry: {
-    id: "hungry",   name: "Hungry Hungry",   description: "+5% mass per fish eaten per stack.",
+    id: "hungry",   name: "Pumpkin Farm",    description: "+5% mass per fish eaten per stack.",
     maxStack: 4, perStack: 1.05, effect: "fishEatMassMult",
   },
 };

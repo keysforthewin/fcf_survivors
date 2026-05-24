@@ -60,8 +60,8 @@ export const MAX_SLOTS = 5;
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   bubble: {
     id: "bubble",
-    name: "Bubble Shot",
-    description: "Lobs bubbles in the direction you're swimming — reaches farther at higher levels.",
+    name: "AK-47",
+    description: "Fires bullets in the direction you're swimming — reaches farther at higher levels.",
     kind: "projectile",
     levels: [
       { damage: 1, cooldownMs: 1500, count: 1, range: 800,  speed: 380, lifetimeMs: 2200, radius: 20 },
@@ -73,8 +73,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   spine: {
     id: "spine",
-    name: "Spine Burst",
-    description: "Fires a ring of spines outward.",
+    name: "Turret",
+    description: "Spins a full ring of bullets, firing them one after another over a second.",
     kind: "radial-burst",
     levels: [
       { damage: 1,  cooldownMs: 4000, count: 8,  range: 400, speed: 360, lifetimeMs: 1200, radius: 6 },
@@ -86,8 +86,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   pulse: {
     id: "pulse",
-    name: "Electric Pulse",
-    description: "Releases a shockwave around you.",
+    name: "ESP",
+    description: "Unleashes a psychic shockwave around you.",
     kind: "radial-pulse",
     levels: [
       { damage: 1, cooldownMs: 5000, range: 250, pulseRadius: 250, lifetimeMs: 220, radius: 250 },
@@ -99,8 +99,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   ink: {
     id: "ink",
-    name: "Ink Trail",
-    description: "Drops a damaging cloud behind you.",
+    name: "Radioactive Waste",
+    description: "Leaves a trail of toxic waste behind you.",
     kind: "trail",
     levels: [
       { damage: 1, cooldownMs: 0, intervalMs: 280, range: 30, lifetimeMs: 3000, radius: 30, reHitMs: 350 },
@@ -112,8 +112,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   piranha: {
     id: "piranha",
-    name: "Piranha Pals",
-    description: "Two mini fish orbit you and bite passers-by.",
+    name: "Toxic Tuna",
+    description: "Two toxic tuna orbit you and bite passers-by.",
     kind: "orbital",
     levels: [
       { damage: 1,  cooldownMs: 0, count: 2, range: 120, intervalMs: 3.0, radius: 28, reHitMs: 500 },
@@ -126,7 +126,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   // Evolutions — defined here so the dispatcher and renderer can branch on them.
   // Granted only via M4 evolution cards; never fire in M3.
   tidal: {
-    id: "tidal", name: "Tidal Wave", description: "A sweeping arc of bubbles.",
+    id: "tidal", name: "P4uly's Gun", description: "A sweeping arc of bullets.",
     kind: "projectile", evolutionOf: "bubble",
     levels: [
       { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
@@ -137,7 +137,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   puffer: {
-    id: "puffer", name: "Pufferfish Aura", description: "Permanent ring of spines.",
+    id: "puffer", name: "Turret Pods", description: "A permanent ring of bullets.",
     kind: "orbital", evolutionOf: "spine",
     levels: [
       { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
@@ -148,7 +148,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   eel: {
-    id: "eel", name: "Eel Storm", description: "Chain lightning to nearby fish.",
+    id: "eel", name: "Admin Help", description: "Calls down chain lightning on nearby fish.",
     kind: "radial-pulse", evolutionOf: "pulse", chain: true,
     levels: [
       { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
@@ -159,7 +159,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   kraken: {
-    id: "kraken", name: "Kraken Bloom", description: "Massive lingering ink cloud.",
+    id: "kraken", name: "Rad Zone", description: "A massive lingering radioactive zone.",
     kind: "trail", evolutionOf: "ink",
     levels: [
       { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
@@ -170,7 +170,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   school: {
-    id: "school", name: "Piranha School", description: "Six piranhas, faster bites.",
+    id: "school", name: "Tuna Trolls", description: "Six tuna, faster bites.",
     kind: "orbital", evolutionOf: "piranha",
     levels: [
       { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },

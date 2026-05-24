@@ -4,8 +4,12 @@ export interface WeaponSlot {
   id: WeaponId;
   level: number;
   cooldownReadyAt: number;
-  /** Per-weapon volatile state. Trail uses {lastDropAt}. Orbital uses {phase, projectileIds}. */
-  state?: TrailState | OrbitalState;
+  /**
+   * Per-weapon volatile state. Trail uses {lastDropAt}. Orbital uses
+   * {phase, projectileIds}. Radial-burst (Turret) uses {startedAt, firedCount}
+   * while a ring is mid-sweep.
+   */
+  state?: TrailState | OrbitalState | BurstSweepState;
 }
 
 export interface TrailState {
@@ -17,6 +21,19 @@ export interface OrbitalState {
   kind: "orbital";
   phase: number;
   projectileIds: number[];
+}
+
+/**
+ * Tracks an in-progress radial-burst sweep: the ring's bullets are emitted one
+ * at a time across ~1s instead of all in a single tick. Present only while a
+ * ring is firing; cleared (back to undefined) when the ring completes.
+ */
+export interface BurstSweepState {
+  kind: "burst-sweep";
+  /** Wall-time the current ring began. */
+  startedAt: number;
+  /** Bullets emitted so far this ring (also the next bullet's index). */
+  firedCount: number;
 }
 
 export type PassiveId =
@@ -76,6 +93,15 @@ export interface Fish {
    * LevelUpMsg after a pickCard consumed the queue.
    */
   pendingLevelUpDrawId: number;
+  /** Re-roll tokens collected from fruit. Spent to re-roll a single level-up card. */
+  rerollsRemaining: number;
+  /** Banish tokens collected from fruit. Spent to banish a level-up card. */
+  banishesRemaining: number;
+  /**
+   * Card subjects (see cardSubject) banished this life. Filtered out of every
+   * future draw. Cleared only on (re)spawn — a "round" is one life.
+   */
+  banishedSubjects: Set<string>;
 }
 
 export interface AiState {
@@ -108,6 +134,15 @@ export interface Pellet {
   x: number;
   y: number;
   color: string;
+}
+
+export interface Fruit {
+  id: EntityId;
+  kind: "fruit";
+  x: number;
+  y: number;
+  /** Which level-up token this fruit grants on pickup. */
+  reward: "reroll" | "banish";
 }
 
 export interface Chunk {
@@ -145,7 +180,7 @@ export interface Projectile {
   orbitRadius?: number;
 }
 
-export type AnyEntity = Fish | Pellet | Chunk | Projectile;
+export type AnyEntity = Fish | Pellet | Fruit | Chunk | Projectile;
 
 /** Server-side record of a hit that occurred this tick. Snapshot builder turns this into HitEvents per socket. */
 export interface HitEventRecord {

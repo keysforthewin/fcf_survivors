@@ -2,7 +2,7 @@ import {
   WEAPONS, MAX_WEAPON_LEVEL, MAX_SLOTS,
   PASSIVES, PASSIVE_IDS,
   EVOLUTIONS, BASE_WEAPONS,
-  xpForLevel, serializeCardId,
+  xpForLevel, serializeCardId, cardSubject, parseCardId,
 } from "@fcf/shared";
 import type { LevelUpCard, ParsedCardId, WeaponId, PassiveId } from "@fcf/shared";
 import type { Fish, WeaponSlot } from "./entity.ts";
@@ -40,46 +40,20 @@ export function processLevelUps(world: World): void {
   }
 }
 
-/** True if drawCards would have anything to offer this fish. */
+/** True if drawCards would have anything to offer this fish (ban-aware). */
 export function canOfferAnyCard(fish: Fish): boolean {
-  // upgradeable owned weapon
-  for (const slot of fish.weapons) {
-    if (slot.level >= MAX_WEAPON_LEVEL) continue;
-    if (BASE_WEAPONS.includes(slot.id) || EVOLUTIONS[slot.id] !== undefined) return true;
-  }
-  const slotsUsed = fish.weapons.length + fish.passives.size;
-  const hasFreeSlot = slotsUsed < MAX_SLOTS;
-  // unowned base weapon with room
-  if (hasFreeSlot) {
-    for (const id of BASE_WEAPONS) {
-      if (!fish.weapons.some((s) => s.id === id)) return true;
-    }
-  }
-  // stack an existing passive
-  for (const [id, stack] of fish.passives) {
-    if (stack < PASSIVES[id].maxStack) return true;
-  }
-  // start a new passive (slot available + at least one untaken passive)
-  if (hasFreeSlot) {
-    for (const id of PASSIVE_IDS) {
-      if (!fish.passives.has(id)) return true;
-    }
-  }
-  // an evolution is unlockable right now
-  for (const slot of fish.weapons) {
-    if (slot.level < MAX_WEAPON_LEVEL) continue;
-    const evo = EVOLUTIONS[slot.id];
-    if (!evo) continue;
-    if ((fish.passives.get(evo.passive) ?? 0) < PASSIVES[evo.passive].maxStack) continue;
-    if (fish.weapons.some((s) => s.id === evo.evolutionId)) continue;
-    return true;
-  }
-  return false;
+  return forcedEvolutions(fish).length > 0 || buildCardPool(fish).length > 0;
 }
 
-/** Build a 3-card draw for `fish` honoring evolution forcing. */
-export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
-  // 1. Forced evolution(s): owned weapon at lv5 + paired passive at max + evolution not yet owned.
+interface WeightedCard { card: LevelUpCard; weight: number; }
+
+/** Whether `subject` has been banished this life. */
+function banned(fish: Fish, subject: string): boolean {
+  return fish.banishedSubjects.has(subject);
+}
+
+/** Evolution cards the fish is eligible for right now, minus banished ones. */
+function forcedEvolutions(fish: Fish): LevelUpCard[] {
   const forced: LevelUpCard[] = [];
   for (const slot of fish.weapons) {
     if (slot.level < MAX_WEAPON_LEVEL) continue;
@@ -88,10 +62,14 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
     const stack = fish.passives.get(evo.passive) ?? 0;
     if (stack < PASSIVES[evo.passive].maxStack) continue;
     if (fish.weapons.some((s) => s.id === evo.evolutionId)) continue;
+    if (banned(fish, cardSubject({ kind: "evolution", baseId: slot.id }))) continue;
     forced.push(makeEvolutionCard(slot.id));
   }
+  return forced;
+}
 
-  // 2. Build the regular pool.
+/** The weighted random pool of regular (non-forced) cards, minus banished subjects. */
+function buildCardPool(fish: Fish): WeightedCard[] {
   const pool: WeightedCard[] = [];
 
   // Upgrades for owned weapons (level < 5)
@@ -101,6 +79,7 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
       // skip evolution-already weapons — they don't upgrade past Lv 1 in this MVP
       continue;
     }
+    if (banned(fish, cardSubject({ kind: "weapon-upgrade", weaponId: slot.id, level: slot.level + 1 }))) continue;
     pool.push({ card: makeUpgradeCard(slot.id, slot.level + 1), weight: 2 });
   }
 
@@ -109,6 +88,7 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
   if (hasFreeSlot) {
     for (const id of BASE_WEAPONS) {
       if (fish.weapons.some((s) => s.id === id)) continue;
+      if (banned(fish, cardSubject({ kind: "weapon-add", weaponId: id }))) continue;
       pool.push({ card: makeAddCard(id), weight: 3 });
     }
   }
@@ -119,37 +99,135 @@ export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
     const current = fish.passives.get(id) ?? 0;
     if (current >= PASSIVES[id].maxStack) continue;
     if (!owned && !hasFreeSlot) continue;
+    if (banned(fish, cardSubject({ kind: "passive-stack", passiveId: id, stack: current + 1 }))) continue;
     pool.push({ card: makeStackCard(id, current + 1), weight: 1 });
   }
 
-  // 3. Assemble the draw: up to 3 distinct cards. Every eligible evolution is
-  //    offered first (they take priority over the random pool); slice guards the
-  //    3-card cap. The pool fill never adds a card already present, so the draw
-  //    is always duplicate-free — even with two evolutions ready it shows both,
-  //    never the same card twice.
+  return pool;
+}
+
+/** Weighted random pick from a non-empty pool. */
+function weightedPick(pool: WeightedCard[], rng: () => number): WeightedCard {
+  const totalW = pool.reduce((acc, w) => acc + w.weight, 0);
+  let r = rng() * totalW;
+  for (const w of pool) {
+    r -= w.weight;
+    if (r <= 0) return w;
+  }
+  return pool[pool.length - 1]!;
+}
+
+/** Build a 3-card draw for `fish` honoring evolution forcing. */
+export function drawCards(fish: Fish, rng: () => number): LevelUpCard[] {
+  // Every eligible evolution is offered first (priority over the random pool);
+  // slice guards the 3-card cap. The pool fill never adds a card already present,
+  // so the draw is always duplicate-free. If the pool runs dry we return fewer
+  // than 3 rather than padding with duplicates — drawCards only runs when
+  // canOfferAnyCard is true, so the result always has ≥1 card.
+  const forced = forcedEvolutions(fish);
+  const pool = buildCardPool(fish);
   const result: LevelUpCard[] = forced.slice(0, 3);
 
   while (result.length < 3 && pool.length > 0) {
     const remaining = pool.filter((w) => !result.some((c) => c.id === w.card.id));
     if (remaining.length === 0) break;
-    const totalW = remaining.reduce((acc, w) => acc + w.weight, 0);
-    let r = rng() * totalW;
-    let picked: WeightedCard | null = null;
-    for (const w of remaining) {
-      r -= w.weight;
-      if (r <= 0) { picked = w; break; }
-    }
-    if (!picked) picked = remaining[remaining.length - 1]!;
-    result.push(picked.card);
+    result.push(weightedPick(remaining, rng).card);
   }
 
-  // If the pool ran dry we return fewer than 3 cards rather than padding with
-  // duplicates — there is genuinely nothing distinct left to offer. (drawCards
-  // only runs when canOfferAnyCard is true, so result always has ≥1 card.)
   return result;
 }
 
-interface WeightedCard { card: LevelUpCard; weight: number; }
+/**
+ * Draw a single replacement card (for re-roll). Picks from the same forced +
+ * regular pools but excludes any card id in `excludeIds` (the cards currently
+ * shown — so the swap never duplicates a visible card, including the one being
+ * replaced). Returns null when nothing distinct is left to offer.
+ */
+export function drawSingleCard(fish: Fish, rng: () => number, excludeIds: Set<string>): LevelUpCard | null {
+  const candidates: WeightedCard[] = [
+    ...forcedEvolutions(fish).map((card) => ({ card, weight: 1 })),
+    ...buildCardPool(fish),
+  ].filter((w) => !excludeIds.has(w.card.id));
+  if (candidates.length === 0) return null;
+  return weightedPick(candidates, rng).card;
+}
+
+/**
+ * Spend one re-roll token to replace a single offered card. The replacement
+ * avoids duplicating any currently-shown card (incl. the one being replaced).
+ * Returns false (and spends nothing) if out of tokens, the card isn't offered,
+ * or there's no distinct alternative.
+ */
+export function rerollCard(world: World, fish: Fish, cardId: string): boolean {
+  if (fish.rerollsRemaining <= 0) return false;
+  const idx = fish.pendingLevelUp.findIndex((c) => c.id === cardId);
+  if (idx < 0) return false;
+  const exclude = new Set(fish.pendingLevelUp.map((c) => c.id));
+  const next = drawSingleCard(fish, world.rng, exclude);
+  if (!next) return false;
+  fish.pendingLevelUp[idx] = next;
+  fish.rerollsRemaining -= 1;
+  fish.pendingLevelUpDrawId += 1;
+  return true;
+}
+
+/**
+ * Spend one banish token to remove an offered card. Bans the card's subject for
+ * the rest of this life (never offered again), strips the matching weapon/passive
+ * from the loadout if owned (hard purge), and drops every shown card with that
+ * subject. If the draw empties, advances the queued pick like applyCard. Returns
+ * false (spending nothing) if out of tokens or the card isn't offered.
+ */
+export function banishCard(world: World, fish: Fish, cardId: string): boolean {
+  if (fish.banishesRemaining <= 0) return false;
+  if (!fish.pendingLevelUp.some((c) => c.id === cardId)) return false;
+  const parsed = parseCardId(cardId);
+  if (!parsed) return false;
+  const subject = cardSubject(parsed);
+  fish.banishedSubjects.add(subject);
+  fish.banishesRemaining -= 1;
+
+  // Hard-purge a matching owned weapon/passive. `evo:` subjects strip nothing —
+  // the still-useful Lv5 base weapon stays.
+  if (subject.startsWith("weapon:")) {
+    const weaponId = subject.slice("weapon:".length);
+    const sidx = fish.weapons.findIndex((s) => s.id === weaponId);
+    if (sidx >= 0) {
+      cleanupSlotOrbitalProjectiles(world, fish.weapons[sidx]!);
+      fish.weapons.splice(sidx, 1);
+    }
+  } else if (subject.startsWith("passive:")) {
+    fish.passives.delete(subject.slice("passive:".length) as PassiveId);
+  }
+
+  // Drop every shown card matching the banished subject (robust against dupes).
+  const before = fish.pendingLevelUp.length;
+  fish.pendingLevelUp = fish.pendingLevelUp.filter((c) => {
+    const p = parseCardId(c.id);
+    return !p || cardSubject(p) !== subject;
+  });
+
+  // Refill the slot(s) the banish vacated so the player keeps a full set of
+  // choices. Replacements avoid the banished subject (now in banishedSubjects),
+  // any still-shown card, and the just-purged loadout — purging usually frees a
+  // slot, opening up new weapon-adds/passive-stacks. Stops early if nothing
+  // distinct is left to offer.
+  while (fish.pendingLevelUp.length < before) {
+    const exclude = new Set(fish.pendingLevelUp.map((c) => c.id));
+    const next = drawSingleCard(fish, world.rng, exclude);
+    if (!next) break;
+    fish.pendingLevelUp.push(next);
+  }
+
+  // If there was genuinely nothing to backfill, pull the next queued pick
+  // (mirrors applyCard tail) so a banish never strands the player on an empty modal.
+  if (fish.pendingLevelUp.length === 0 && fish.queuedLevelUps > 0) {
+    fish.queuedLevelUps -= 1;
+    if (canOfferAnyCard(fish)) fish.pendingLevelUp = drawCards(fish, world.rng);
+  }
+  fish.pendingLevelUpDrawId += 1;
+  return true;
+}
 
 function makeAddCard(id: WeaponId): LevelUpCard {
   return {

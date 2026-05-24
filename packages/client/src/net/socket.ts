@@ -82,6 +82,8 @@ export class NetSocket {
       | { t: "discardWeapon"; weaponId: string }
       | { t: "discardPassive"; passiveId: string }
       | { t: "setLevelUpDismissed"; dismissed: boolean }
+      | { t: "rerollCard"; cardId: string }
+      | { t: "banishCard"; cardId: string }
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(obj));
@@ -118,6 +120,14 @@ export class NetSocket {
 
   setLevelUpDismissed(dismissed: boolean): void {
     this.send({ t: "setLevelUpDismissed", dismissed });
+  }
+
+  rerollCard(cardId: string): void {
+    this.send({ t: "rerollCard", cardId });
+  }
+
+  banishCard(cardId: string): void {
+    this.send({ t: "banishCard", cardId });
   }
 
   isOpen(): boolean {

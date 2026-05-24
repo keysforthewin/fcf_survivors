@@ -26,6 +26,8 @@ export interface LevelUpMount {
   restore: () => void;
   /** Refresh the card row with a new draw (called when the server rotates to the next queued pick). */
   updateCards: (msg: LevelUpMsg) => void;
+  /** Live update of re-roll/banish token counts (called from snapshots as fruit is collected). */
+  setCurrency: (rerolls: number, banishes: number) => void;
 }
 
 export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
@@ -36,6 +38,7 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
       <div class="levelup-banner-label" data-banner-label>LEVEL ${msg.level}</div>
       <div class="levelup-banner-title">Choose your upgrade</div>
       <div class="levelup-banner-queued" data-banner-queued></div>
+      <div class="levelup-banner-resources" data-banner-resources></div>
     </div>
     <div class="levelup-cards" data-cards></div>
     <button class="levelup-skip" type="button">Skip for now (Esc)</button>
@@ -44,6 +47,14 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
   const skipBtn = root.querySelector(".levelup-skip") as HTMLButtonElement;
   const bannerLabel = root.querySelector("[data-banner-label]") as HTMLElement;
   const bannerQueued = root.querySelector("[data-banner-queued]") as HTMLElement;
+  const bannerResources = root.querySelector("[data-banner-resources]") as HTMLElement;
+
+  let rerolls = msg.rerolls;
+  let banishes = msg.banishes;
+  // Cleared when the next LevelUpMsg arrives (or by a safety timeout) — guards
+  // against a click landing before the swapped card round-trips back.
+  let actionPending = false;
+  let actionTimer: ReturnType<typeof setTimeout> | null = null;
 
   let currentCards: LevelUpCard[] = [];
   let dismissed = false;
@@ -68,29 +79,89 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
     }
   };
 
+  // Brief guard between firing a re-roll/banish and the swapped draw round-tripping
+  // back. Cleared by updateCards or a safety timeout. (Server validates by cardId,
+  // so a stray double-click can't double-spend regardless — this is just for UX.)
+  const beginAction = () => {
+    actionPending = true;
+    cardRow.classList.add("acting");
+    if (actionTimer) clearTimeout(actionTimer);
+    actionTimer = setTimeout(endAction, 600);
+  };
+  const endAction = () => {
+    actionPending = false;
+    cardRow.classList.remove("acting");
+    if (actionTimer) { clearTimeout(actionTimer); actionTimer = null; }
+  };
+
+  const doReroll = (cardId: string) => {
+    if (tornDown || dismissed || actionPending || rerolls <= 0) return;
+    beginAction();
+    net.rerollCard(cardId);
+  };
+  const doBanish = (cardId: string) => {
+    if (tornDown || dismissed || actionPending || banishes <= 0) return;
+    beginAction();
+    net.banishCard(cardId);
+  };
+
+  // Update the banner token tally + show/hide each card's action buttons.
+  const renderResources = () => {
+    const parts: string[] = [];
+    if (rerolls > 0) parts.push(`<span class="levelup-resource reroll">⟲ ${rerolls} re-roll${rerolls === 1 ? "" : "s"}</span>`);
+    if (banishes > 0) parts.push(`<span class="levelup-resource banish">✕ ${banishes} banish${banishes === 1 ? "" : "es"}</span>`);
+    bannerResources.innerHTML = parts.join("");
+    for (const el of cardEls) {
+      const rr = el.querySelector(".levelup-card-reroll") as HTMLElement | null;
+      const bn = el.querySelector(".levelup-card-banish") as HTMLElement | null;
+      const actions = el.querySelector(".levelup-card-actions") as HTMLElement | null;
+      if (rr) rr.style.display = rerolls > 0 ? "" : "none";
+      if (bn) bn.style.display = banishes > 0 ? "" : "none";
+      if (actions) actions.style.display = (rerolls > 0 || banishes > 0) ? "" : "none";
+    }
+  };
+
+  // Build one card tile. `idx` is the slot position (stable for the life of the
+  // draw); `card.id` drives the re-roll/banish target. Pulled out of renderCards
+  // so updateCards can rebuild a single tile in place without touching the others.
+  const buildCardEl = (card: LevelUpCard, idx: number): HTMLButtonElement => {
+    const el = document.createElement("button");
+    el.className = `levelup-card kind-${card.kind}`;
+    el.tabIndex = -1;
+    el.style.setProperty("--card-accent", CARD_ACCENTS[card.kind]);
+    // Action controls are <div role="button"> rather than <button> — nesting a
+    // real button inside the card <button> is invalid HTML.
+    el.innerHTML = `
+      <div class="levelup-card-kind">${CARD_KIND_LABEL[card.kind]}</div>
+      <div class="levelup-card-title">${escapeHtml(card.title)}</div>
+      <div class="levelup-card-desc">${escapeHtml(card.description)}</div>
+      <div class="levelup-card-actions">
+        <div class="levelup-card-reroll" role="button" tabindex="-1">Re-roll</div>
+        <div class="levelup-card-banish" role="button" tabindex="-1">Banish</div>
+      </div>
+    `;
+    el.addEventListener("click", () => pick(idx));
+    el.addEventListener("mouseenter", () => {
+      if (inputMode !== "mouse") return;
+      setHighlight(idx);
+    });
+    const rr = el.querySelector(".levelup-card-reroll") as HTMLElement;
+    rr.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doReroll(card.id); });
+    const bn = el.querySelector(".levelup-card-banish") as HTMLElement;
+    bn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doBanish(card.id); });
+    return el;
+  };
+
   const renderCards = (cards: LevelUpCard[]) => {
     cardRow.innerHTML = "";
-    cardEls = [];
-    cards.forEach((card, idx) => {
-      const el = document.createElement("button");
-      el.className = `levelup-card kind-${card.kind}`;
-      el.tabIndex = -1;
-      el.style.setProperty("--card-accent", CARD_ACCENTS[card.kind]);
-      el.innerHTML = `
-        <div class="levelup-card-kind">${CARD_KIND_LABEL[card.kind]}</div>
-        <div class="levelup-card-title">${escapeHtml(card.title)}</div>
-        <div class="levelup-card-desc">${escapeHtml(card.description)}</div>
-      `;
-      el.addEventListener("click", () => pick(idx));
-      el.addEventListener("mouseenter", () => {
-        if (inputMode !== "mouse") return;
-        setHighlight(idx);
-      });
+    cardEls = cards.map((card, idx) => {
+      const el = buildCardEl(card, idx);
       cardRow.appendChild(el);
-      cardEls.push(el);
+      return el;
     });
     highlighted = Math.floor(cards.length / 2);
     setHighlight(highlighted);
+    renderResources();
   };
 
   const setBanner = (level: number, queued: number) => {
@@ -139,11 +210,39 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
 
   const updateCards = (next: LevelUpMsg) => {
     if (tornDown) return;
+    const prev = currentCards;
     currentCards = next.cards;
+    rerolls = next.rerolls;
+    banishes = next.banishes;
     awaitingResponse = false;
+    endAction();
     cardRow.classList.remove("locked");
-    renderCards(next.cards);
+
+    if (next.cards.length !== prev.length) {
+      // Card count changed (e.g. a fresh queued draw after a pick) — full rebuild.
+      renderCards(next.cards);
+    } else {
+      // Same count: rebuild only the tiles whose card actually changed. A re-roll
+      // swaps exactly one card, so only that tile re-renders — the cards you kept
+      // stay put and don't re-animate.
+      next.cards.forEach((card, i) => {
+        if (prev[i]?.id === card.id) return;
+        const el = buildCardEl(card, i);
+        el.classList.add("rerolled");
+        cardRow.replaceChild(el, cardEls[i]!);
+        cardEls[i] = el;
+      });
+      setHighlight(Math.min(highlighted, cardEls.length - 1));
+      renderResources();
+    }
     setBanner(next.level, next.queued);
+  };
+
+  const setCurrency = (r: number, b: number) => {
+    if (tornDown || (r === rerolls && b === banishes)) return;
+    rerolls = r;
+    banishes = b;
+    renderResources();
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -196,6 +295,7 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
   const teardown = () => {
     if (tornDown) return;
     tornDown = true;
+    if (actionTimer) clearTimeout(actionTimer);
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("mousemove", onMouseMove);
     root.classList.add("closing");
@@ -208,6 +308,7 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
     dismiss,
     restore,
     updateCards,
+    setCurrency,
   };
 }
 

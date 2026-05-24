@@ -61,6 +61,18 @@ export const SetLevelUpDismissedMsg = z.object({
 });
 export type SetLevelUpDismissedMsg = z.infer<typeof SetLevelUpDismissedMsg>;
 
+export const RerollCardMsg = z.object({
+  t: z.literal("rerollCard"),
+  cardId: z.string(),
+});
+export type RerollCardMsg = z.infer<typeof RerollCardMsg>;
+
+export const BanishCardMsg = z.object({
+  t: z.literal("banishCard"),
+  cardId: z.string(),
+});
+export type BanishCardMsg = z.infer<typeof BanishCardMsg>;
+
 export const ClientMsg = z.discriminatedUnion("t", [
   HelloMsg,
   InputMsg,
@@ -71,6 +83,8 @@ export const ClientMsg = z.discriminatedUnion("t", [
   DiscardWeaponMsg,
   DiscardPassiveMsg,
   SetLevelUpDismissedMsg,
+  RerollCardMsg,
+  BanishCardMsg,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -83,7 +97,7 @@ export interface WelcomeMsg {
 
 export interface EntityDelta {
   id: number;
-  kind: "fish" | "pellet" | "projectile" | "chunk";
+  kind: "fish" | "pellet" | "projectile" | "chunk" | "fruit";
   x: number;
   y: number;
   vx?: number;
@@ -97,6 +111,8 @@ export interface EntityDelta {
   ownerId?: number;
   radius?: number;
   isAi?: boolean;
+  /** Fruit only (first-seen): which token this fruit grants on pickup. */
+  reward?: "reroll" | "banish";
 }
 
 /** Per-tick hit event: a projectile damaged a fish. Used for client-side hit markers. */
@@ -163,6 +179,10 @@ export interface SnapshotMsg {
      * 0 means no pending picks. HUD uses this to render a "k more pending" badge.
      */
     pendingPicks: number;
+    /** Re-roll tokens available (collected from fruit). Spent on level-up cards. */
+    rerolls: number;
+    /** Banish tokens available (collected from fruit). Spent on level-up cards. */
+    banishes: number;
   };
   /** Server's current time, always sent (matches you.serverNow when present). */
   serverNow: number;
@@ -189,6 +209,10 @@ export interface LevelUpMsg {
   cards: LevelUpCard[];
   /** Additional picks queued behind this one. 0 means this is the last set. */
   queued: number;
+  /** Re-roll tokens the player currently holds (for button visibility). */
+  rerolls: number;
+  /** Banish tokens the player currently holds (for button visibility). */
+  banishes: number;
 }
 
 export interface OwnedWeapon { id: string; level: number; }

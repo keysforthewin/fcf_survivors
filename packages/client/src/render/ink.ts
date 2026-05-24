@@ -1,17 +1,18 @@
 import { Sprite, Texture } from "pixi.js";
 
-// Trail weapons (ink + its evolution kraken) drop a static cloud behind the player
-// every few hundred ms. Each drop is a soft radial-gradient blob; rendered together on
-// a blurred layer they fuse into one continuous mass that's densest at the player and
-// dissipates (fades by age) toward the tail — ink diffusing in water.
+// Trail weapons (Radioactive Waste + its evolution Rad Zone) drop a static cloud
+// behind the player every few hundred ms. Each drop is a soft radial-gradient blob;
+// rendered together on a blurred layer they fuse into one continuous mass that's
+// densest at the player and dissipates (fades by age) toward the tail — toxic
+// waste spreading through the water.
 
 // `fadeMs` is set just below the server's minimum lifetime for the weapon so the blob is
 // already ~invisible by the time the server removes the entity (no visible pop).
-// Murky purple rather than near-black: pure dark ink is invisible against the dark navy
-// water. These read as "ink in water" while still standing out enough to see the trail.
+// Toxic green reads clearly against the dark navy water; Rad Zone is a brighter,
+// more saturated green so the evolution stays visually distinct.
 const INK_CONFIG: Record<string, { rgb: [number, number, number]; fadeMs: number }> = {
-  ink: { rgb: [92, 52, 130], fadeMs: 2900 }, // server lifetime 3000–3600ms
-  kraken: { rgb: [120, 70, 175], fadeMs: 4300 }, // brighter violet; server lifetime 4500ms
+  ink: { rgb: [120, 220, 60], fadeMs: 2900 }, // server lifetime 3000–3600ms
+  kraken: { rgb: [150, 245, 80], fadeMs: 4300 }, // brighter toxic green; server lifetime 4500ms
 };
 
 const TEX_SIZE = 128;

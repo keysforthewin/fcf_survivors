@@ -359,6 +359,39 @@ button.play:active { transform: translateY(0); }
   transform: translateY(-1px);
 }
 
+/* Evolution pair: this weapon + its paired passive are both owned, so the combo
+   evolves once both hit max. Glitter both pips (pink, matching the EVOLUTION card)
+   so the synergy is discoverable. */
+.skill-pip.evo-pair {
+  border-color: rgba(255,133,161,0.75);
+  animation: skill-pip-evo-glow 1.8s ease-in-out infinite;
+}
+.skill-pip.evo-pair::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+  background: linear-gradient(115deg,
+    transparent 38%,
+    rgba(255,210,224,0.45) 47%,
+    rgba(255,255,255,0.8) 50%,
+    rgba(255,210,224,0.45) 53%,
+    transparent 62%);
+  background-size: 280% 280%;
+  mix-blend-mode: screen;
+  animation: skill-pip-evo-shimmer 2.6s linear infinite;
+}
+@keyframes skill-pip-evo-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,133,161,0); }
+  50%      { box-shadow: 0 0 12px 1px rgba(255,133,161,0.6); }
+}
+@keyframes skill-pip-evo-shimmer {
+  0%   { background-position: 130% 0%; }
+  100% { background-position: -50% 0%; }
+}
+
 .skill-pip-icon {
   font-size: 1.7rem;
   line-height: 1;
@@ -608,6 +641,14 @@ button.play:active { transform: translateY(0); }
 
 .levelup-card:active { transform: translateY(0); }
 
+/* One-shot flash on a card that was just swapped in by a re-roll/banish, so the
+   eye lands on the single tile that changed (the others are left untouched). */
+.levelup-card.rerolled { animation: levelup-card-swap 0.5s ease-out; }
+@keyframes levelup-card-swap {
+  0%   { transform: translateY(-8px) scale(0.96); box-shadow: 0 12px 30px rgba(0,0,0,0.4), 0 0 0 2px var(--card-accent, var(--accent-2)); }
+  100% { transform: none; box-shadow: none; }
+}
+
 .levelup-card-kind {
   font-size: 0.65rem;
   letter-spacing: 0.18em;
@@ -661,6 +702,63 @@ button.play:active { transform: translateY(0); }
 }
 
 .levelup-skip:focus { outline: none; }
+
+/* Re-roll / banish token tally under the banner. */
+.levelup-banner-resources {
+  display: flex;
+  gap: 1.4rem;
+  justify-content: center;
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
+.levelup-resource.reroll { color: #7fcfff; }
+.levelup-resource.banish { color: #ff8a96; }
+
+/* Per-card Re-roll / Banish controls (rendered as role=button divs to avoid
+   nesting a <button> inside the card <button>). */
+.levelup-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+.levelup-card-reroll,
+.levelup-card-banish {
+  flex: 1;
+  text-align: center;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.levelup-card-reroll:hover {
+  background: rgba(127,207,255,0.2);
+  border-color: rgba(127,207,255,0.55);
+}
+.levelup-card-banish {
+  background: rgba(255,107,107,0.14);
+  border-color: rgba(255,107,107,0.3);
+  color: #ffd3d7;
+}
+.levelup-card-banish:hover {
+  background: rgba(255,107,107,0.26);
+  border-color: rgba(255,107,107,0.55);
+}
+/* Dim the action row while a re-roll/banish is round-tripping. */
+.levelup-cards.acting .levelup-card-actions {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* HUD re-roll / banish token counters (shown only when held). */
+.hud-token.reroll .value { color: #7fcfff; }
+.hud-token.banish .value { color: #ff8a96; }
 
 /* When the player dismisses, hide the overlay entirely but keep the DOM + keydown listener alive so Esc can restore it. */
 .levelup-overlay.dismissed {
@@ -773,6 +871,7 @@ button.play:active { transform: translateY(0); }
 
 .leaderboard-tab {
   flex: 1;
+  white-space: nowrap;
   background: rgba(0,0,0,0.25);
   color: var(--muted);
   border: 1px solid rgba(255,255,255,0.06);
@@ -956,7 +1055,7 @@ button.play:active { transform: translateY(0); }
 }
 
 .scoreboard-panel {
-  width: min(420px, 92vw);
+  width: min(640px, 94vw);
   background: rgba(10, 22, 34, 0.92);
   border: 1px solid rgba(127, 207, 255, 0.25);
   border-radius: 12px;

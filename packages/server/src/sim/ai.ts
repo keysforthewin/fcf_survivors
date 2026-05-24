@@ -1,12 +1,10 @@
 import { AI, ARENA, canEat, massSpeedMult } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
+import { NPC_NAMES } from "./npc-names.ts";
 
-const AI_NAMES = [
-  "Bloop", "Gilly", "Splash", "Finley", "Bubble",
-  "Nemo", "Wanda", "Cod-Father", "Pesce", "Bass-Drop",
-  "Trout-Mouth", "Sushi", "Tuna-Salad", "Kelp", "Reef",
-];
+/** AI fish name pool. Edit the list in `npc-names.ts`. */
+export const AI_NAMES = NPC_NAMES;
 
 const AI_COLORS = [
   "#7fcfff", "#9affcf", "#ffd97f", "#ff9fa4", "#caa8ff",
@@ -15,6 +13,21 @@ const AI_COLORS = [
 
 function pick<T>(arr: readonly T[], rng: () => number): T {
   return arr[Math.floor(rng() * arr.length)]!;
+}
+
+/**
+ * Pick an AI name not in `taken`. Humans get priority over AI names, so callers
+ * pass the set of names a human currently holds (plus any already reassigned in
+ * the same pass). When the whole pool is taken, fall back to a numeric suffix
+ * (`Bloop-2`, `Bloop-3`, ...) so the result is always unique.
+ */
+export function pickAiName(rng: () => number, taken: ReadonlySet<string>): string {
+  const free = AI_NAMES.filter((n) => !taken.has(n));
+  if (free.length > 0) return pick(free, rng);
+  const base = pick(AI_NAMES, rng);
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
 }
 
 /**
@@ -49,7 +62,7 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     headingY: 0,
     mass: m,
     color: pick(AI_COLORS, rng),
-    name: pick(AI_NAMES, rng),
+    name: pickAiName(rng, world.takenNames()),
     isAi: true,
     boost: false,
     boostUntil: 0,
@@ -85,6 +98,9 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     queuedLevelUps: 0,
     levelUpDismissed: false,
     pendingLevelUpDrawId: 0,
+    rerollsRemaining: 0,
+    banishesRemaining: 0,
+    banishedSubjects: new Set(),
   };
   return fish;
 }

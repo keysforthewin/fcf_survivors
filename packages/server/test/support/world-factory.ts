@@ -1,5 +1,5 @@
 import { World, type WorldDeps } from "../../src/sim/world.ts";
-import type { Fish, Pellet, AiState } from "../../src/sim/entity.ts";
+import type { Fish, Pellet, Fruit, AiState } from "../../src/sim/entity.ts";
 import { seededRng } from "./seeded-rng.ts";
 
 export interface FishSeed {
@@ -20,11 +20,18 @@ export interface PelletSeed {
   color?: string;
 }
 
+export interface FruitSeed {
+  x: number;
+  y: number;
+  reward?: "reroll" | "banish";
+}
+
 export interface MakeWorldOpts {
   seed?: number;
   startTime?: number;
   fish?: FishSeed[];
   pellets?: PelletSeed[];
+  fruits?: FruitSeed[];
   /** Enable production-style pellet auto-spawn. Default false in tests. */
   autoSpawnPellets?: boolean;
   /** Enable production-style AI population maintenance. Default false in tests. */
@@ -99,6 +106,9 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       queuedLevelUps: 0,
       levelUpDismissed: false,
       pendingLevelUpDrawId: 0,
+      rerollsRemaining: 0,
+      banishesRemaining: 0,
+      banishedSubjects: new Set(),
     };
     if (seed.isAi) {
       fish.aiState = {
@@ -128,6 +138,18 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       color: pseed.color ?? "#ffdf80",
     };
     world.pellets.set(id, p);
+  }
+
+  for (const fseed of opts.fruits ?? []) {
+    const id = world.nextId();
+    const fr: Fruit = {
+      id,
+      kind: "fruit",
+      x: fseed.x,
+      y: fseed.y,
+      reward: fseed.reward ?? "reroll",
+    };
+    world.fruits.set(id, fr);
   }
 
   return { world, clock, rng, byName };
