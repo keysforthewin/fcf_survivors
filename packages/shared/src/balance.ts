@@ -31,10 +31,12 @@ export const PELLET = {
   /**
    * Spawn-distribution exponent biasing pellets toward the arena center.
    * 1 = uniform; higher concentrates density centrally while edges still get
-   * pellets (edge density scales as ~1/centerBias). Counteracts AI fish grazing
-   * the middle bare and leaving only the outer ring stocked.
+   * pellets (edge density scales as ~1/centerBias). At 4 the pull is strong —
+   * a dense core with sparse outer arena and corners. AI fish no longer strip
+   * the middle while the server is idle (grazing pauses with no humans), so
+   * this bias is mostly felt during active play.
    */
-  centerBias: 2,
+  centerBias: 4,
 } as const;
 
 /**
@@ -178,7 +180,7 @@ export function massDecayPerSec(mass: number): number {
 }
 
 export function xpForLevel(level: number): number {
-  return Math.floor(6 * Math.pow(1.1, level - 1));
+  return Math.floor(10 * Math.pow(1.1, level - 1));
 }
 
 /**

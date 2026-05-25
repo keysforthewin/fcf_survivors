@@ -39,6 +39,15 @@ export class World {
   tick = 0;
   lastTickAt = 0;
 
+  /**
+   * Whether any human is connected. Production drives this from the live socket
+   * count (see index.ts open/close). When false the world stops spawning pellets
+   * and AI fish stop grazing them — the idle state, since the game sits empty
+   * most of the time. Defaults true so the sim runs its full pellet economy
+   * standalone (cucumber tests rely on this default).
+   */
+  humansPresent = true;
+
   /** Test seams: replace these via the constructor to make sim deterministic. */
   now: () => number;
   rng: () => number;
@@ -297,8 +306,9 @@ export class World {
   step(dtSec: number, now: number): void {
     this.tick++;
 
-    // spawn pellets up to target count
-    if (this.autoSpawnPellets) {
+    // spawn pellets up to target count — only while a human is connected, so an
+    // idle (unwatched) server doesn't churn the pellet/fruit economy.
+    if (this.autoSpawnPellets && this.humansPresent) {
       let toSpawn = Math.min(
         PELLET.spawnPerTick,
         PELLET.targetCount - this.pellets.size,
@@ -378,6 +388,8 @@ export class World {
     const scratch: any[] = [];
     for (const f of this.fish.values()) {
       if (!f.alive) continue;
+      // AI fish only graze pellets while a human is connected; humans always eat.
+      if (f.isAi && !this.humansPresent) continue;
       const baseR = fishRadius(f.mass);
       const pickupR = f.isAi ? baseR : getPickupRadius(baseR, f);
       scratch.length = 0;

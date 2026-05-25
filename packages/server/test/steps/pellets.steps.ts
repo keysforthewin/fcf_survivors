@@ -8,6 +8,10 @@ Given("a world with pellet auto-spawn enabled", function (this: TestWorld) {
   this.sim = makeWorld({ seed: 1, autoSpawnPellets: true });
 });
 
+Given("a world with pellet auto-spawn enabled but no humans connected", function (this: TestWorld) {
+  this.sim = makeWorld({ seed: 1, autoSpawnPellets: true, humansPresent: false });
+});
+
 Then(
   "the pellet count is approaching the target",
   function (this: TestWorld) {

@@ -65,6 +65,9 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
   const PORT = opts.port ?? Number(process.env.PORT ?? 4000);
   const world = new World(opts.worldDeps);
   const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
+  // Boot is idle: no connections yet, so pause pellet spawn + AI grazing until
+  // a human connects. Kept in sync from the open/close handlers below.
+  world.humansPresent = false;
   // Per-player session metadata keyed by fishId. Outlives the socket so a
   // disconnect (where ws.data is no longer reachable from the tick loop) can
   // still produce a complete ScoreDoc. The `disconnected` flag tells the
@@ -382,6 +385,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     websocket: {
       open(ws) {
         sockets.set(ws.data.id, ws);
+        world.humansPresent = true;
         broadcastLeaderboard(ws).catch(() => {});
         if (log) console.log(`[ws] open ${ws.data.id} (${ws.data.ip})`);
       },
@@ -537,6 +541,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       },
       close(ws) {
         sockets.delete(ws.data.id);
+        world.humansPresent = sockets.size > 0;
         const fid = ws.data.fishId;
         if (fid !== null) {
           const f = world.fish.get(fid);

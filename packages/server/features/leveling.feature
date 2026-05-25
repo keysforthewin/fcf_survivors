@@ -17,7 +17,7 @@ Feature: XP and level progression
 
   Scenario: A single level threshold queues exactly one pick
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     Then "Alpha" has level 2
     And "Alpha" has XP 0
@@ -39,13 +39,13 @@ Feature: XP and level progression
     Then "Bob" has level 1
 
   Scenario: The xpForLevel curve is preserved
-    Then the XP threshold for level 1 is 6
-    And the XP threshold for level 2 is 6
-    And the XP threshold for level 5 is 8
+    Then the XP threshold for level 1 is 10
+    And the XP threshold for level 2 is 11
+    And the XP threshold for level 5 is 14
 
   Scenario: Dismissing the level-up modal unfreezes input
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And "Alpha" dismisses the level-up modal
     And "Alpha" sends input (1, 0)
@@ -55,7 +55,7 @@ Feature: XP and level progression
 
   Scenario: Restoring the modal re-freezes input
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And "Alpha" dismisses the level-up modal
     And "Alpha" restores the level-up modal
@@ -66,7 +66,7 @@ Feature: XP and level progression
 
   Scenario: Picking the only pending card clears everything
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And "Alpha" dismisses the level-up modal
     And "Alpha" picks the first offered card
@@ -87,7 +87,7 @@ Feature: XP and level progression
     Given a player "Alpha" at (1000, 1000) with mass 10
     And "Alpha" has weapon "bubble" at level 5
     And "Alpha" has passive "magnet" at stack 3
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     Then "Alpha" is offered an evolution for "bubble"
 
@@ -97,7 +97,7 @@ Feature: XP and level progression
     And "Alpha" has weapon "spine" at level 5
     And "Alpha" has passive "magnet" at stack 3
     And "Alpha" has passive "scales" at stack 5
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     Then "Alpha" is offered an evolution for "bubble"
     And "Alpha" is offered an evolution for "spine"
@@ -109,7 +109,7 @@ Feature: XP and level progression
     And "Alpha" has passive "magnet" at stack 3
     And "Alpha" has passive "scales" at stack 5
     And "Alpha" has passive "teeth" at stack 5
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     Then "Alpha" is offered an evolution for "bubble"
     And "Alpha" is offered an evolution for "spine"

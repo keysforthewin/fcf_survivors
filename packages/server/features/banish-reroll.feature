@@ -9,7 +9,7 @@ Feature: Re-rolling and banishing level-up cards
   Scenario: Re-rolling replaces one card and spends one token
     Given a player "Alpha" at (1000, 1000) with mass 10
     And "Alpha" holds 2 re-roll tokens
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And remember the first offered card of "Alpha"
     And "Alpha" re-rolls the first offered card
@@ -19,7 +19,7 @@ Feature: Re-rolling and banishing level-up cards
 
   Scenario: Re-rolling with no tokens does nothing
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And remember the first offered card of "Alpha"
     And "Alpha" re-rolls the first offered card
@@ -32,9 +32,8 @@ Feature: Re-rolling and banishing level-up cards
     And "Alpha" has passive "fin" at stack 5
     And "Alpha" has passive "gulp" at stack 5
     And "Alpha" has passive "scales" at stack 5
-    And "Alpha" has passive "teeth" at stack 5
     And "Alpha" holds 1 banish token
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     Then "Alpha" has a pending level-up modal
     When "Alpha" banishes the first offered card
@@ -43,7 +42,7 @@ Feature: Re-rolling and banishing level-up cards
     And "Alpha" has banished subject "weapon:bubble"
     And "Alpha" has a pending level-up modal
     And "Alpha" is not offered a card for weapon "bubble"
-    When "Alpha" has accumulated 6 XP
+    When "Alpha" has accumulated 10 XP
     And level-ups are processed
     Then "Alpha" has a pending level-up modal
     And "Alpha" is not offered a card for weapon "bubble"
@@ -51,7 +50,7 @@ Feature: Re-rolling and banishing level-up cards
   Scenario: Banishing draws a replacement so the modal stays full
     Given a player "Beta" at (1000, 1000) with mass 10
     And "Beta" holds 1 banish token
-    And "Beta" has accumulated 6 XP
+    And "Beta" has accumulated 10 XP
     When level-ups are processed
     Then "Beta" has a pending level-up modal
     And "Beta" is offered 3 cards
@@ -62,7 +61,7 @@ Feature: Re-rolling and banishing level-up cards
 
   Scenario: Banishing with no tokens does nothing
     Given a player "Alpha" at (1000, 1000) with mass 10
-    And "Alpha" has accumulated 6 XP
+    And "Alpha" has accumulated 10 XP
     When level-ups are processed
     And remember the first offered card of "Alpha"
     And "Alpha" banishes the first offered card

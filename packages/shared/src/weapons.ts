@@ -55,7 +55,7 @@ export interface WeaponDef {
 
 export const MAX_WEAPON_LEVEL = 5;
 /** Total weapons + passives a fish can hold at once. */
-export const MAX_SLOTS = 5;
+export const MAX_SLOTS = 4;
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   bubble: {

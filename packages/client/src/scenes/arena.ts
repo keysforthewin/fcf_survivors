@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, FISH, MOUTH, TICK, fishRadius, stepFishMovement, sampleAt, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import { ARENA, FISH, MOUTH, TICK, MAX_SLOTS, fishRadius, stepFishMovement, sampleAt, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -1523,7 +1523,7 @@ function mountHud(): HudElements {
     </div>
     <div class="hud-skills" data-skills>
       <div class="hud-skill-row" data-skill-row>
-        ${[0,1,2,3,4].map(() => `
+        ${Array.from({ length: MAX_SLOTS }).map(() => `
           <div class="skill-pip empty" type="button">
             <div class="skill-pip-cooldown"></div>
             <div class="skill-pip-icon"></div>

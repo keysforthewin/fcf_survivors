@@ -36,6 +36,8 @@ export interface MakeWorldOpts {
   autoSpawnPellets?: boolean;
   /** Enable production-style AI population maintenance. Default false in tests. */
   maintainAi?: boolean;
+  /** Whether a human is "connected" (gates pellet spawn + AI grazing). Default true. */
+  humansPresent?: boolean;
 }
 
 export interface TestClock {
@@ -68,6 +70,7 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
     maintainAi: opts.maintainAi ?? false,
   };
   const world = new World(deps);
+  world.humansPresent = opts.humansPresent ?? true;
   const byName = new Map<string, number>();
 
   for (const seed of opts.fish ?? []) {

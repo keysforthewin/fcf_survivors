@@ -86,6 +86,14 @@ Given("a fresh world with seed {int}", function (this: TestWorld, seed: number) 
   this.sim = makeWorld({ seed });
 });
 
+Given("no humans are connected", function (this: TestWorld) {
+  ensureSim(this).world.humansPresent = false;
+});
+
+Given("a human is connected", function (this: TestWorld) {
+  ensureSim(this).world.humansPresent = true;
+});
+
 /* -------- Fish seeding -------- */
 
 Given(
