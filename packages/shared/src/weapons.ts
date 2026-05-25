@@ -187,3 +187,15 @@ export function getWeaponLevel(id: WeaponId, level: number): WeaponLevel {
   const idx = Math.max(0, Math.min(MAX_WEAPON_LEVEL - 1, level - 1));
   return def.levels[idx]!;
 }
+
+/**
+ * Largest collision/visual `radius` any projectile can have, across every weapon and
+ * level (currently 500, eel's pulse ring). Derived so balance changes can't silently
+ * outgrow a hard-coded value. Used to pad the spatial-hash interest query for projectiles
+ * so a wide ring centered just outside a player's view radius — but whose body reaches in —
+ * is still queried (see `buildSnapshot`).
+ */
+export const MAX_PROJECTILE_RADIUS = Object.values(WEAPONS).reduce(
+  (max, def) => def.levels.reduce((m, lvl) => Math.max(m, lvl.radius ?? 0), max),
+  0,
+);

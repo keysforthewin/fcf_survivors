@@ -97,9 +97,11 @@ export class NetSocket {
     this.send({ t: "identity", name, color });
   }
 
-  input(vx: number, vy: number, boost: boolean): void {
+  /** Send an input and return the seq it was tagged with (for client-side prediction). */
+  input(vx: number, vy: number, boost: boolean): number {
     this.seq++;
     this.send({ t: "input", seq: this.seq, vx, vy, boost });
+    return this.seq;
   }
 
   spectate(camX: number, camY: number): void {

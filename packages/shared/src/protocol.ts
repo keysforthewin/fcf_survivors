@@ -160,8 +160,17 @@ export interface SnapshotMsg {
   you?: {
     x: number;
     y: number;
+    /** Authoritative velocity (raw). Seeds client-side prediction/reconciliation. */
+    vx: number;
+    vy: number;
     hx: number;
     hy: number;
+    /**
+     * Effective base move speed after passive + mass multipliers (`getMoveSpeed`), excluding
+     * the boost multiplier. The client applies boost itself during prediction. Sent so the
+     * client predictor can compute desired velocity without seeing passive internals.
+     */
+    moveSpeed: number;
     mass: number;
     /** Hard cap on player mass; HUD uses this for the mass-cap indicator. */
     maxMass: number;

@@ -28,6 +28,10 @@ When("{string} builds a snapshot", function (this: TestWorld, observer: string) 
   const self = tryFish(sim, observer);
   assert.ok(self, `${observer} missing`);
   const view = getOrMakeView(this, observer);
+  // Mirror the production tick loop: snapshots query the spatial hashes for interest
+  // culling, so they must reflect current entity positions. Scenarios that set up
+  // fish/pellets without advancing the world never populate the hashes otherwise.
+  sim.world.rebuildSpatialHashes();
   const snap = buildSnapshot(sim.world, self, view, sim.clock.now());
   this.data.set(snapKey(this, observer), snap);
 });
@@ -89,6 +93,30 @@ Then(
 );
 
 Then(
+  "{string}'s snapshot includes a projectile",
+  function (this: TestWorld, observer: string) {
+    const snap = this.data.get(snapKey(this, observer)) as SnapshotMsg | undefined;
+    assert.ok(snap, "Build a snapshot first");
+    assert.ok(
+      snap.entities.some((e) => e.kind === "projectile"),
+      `Snapshot for ${observer} included no projectile`
+    );
+  }
+);
+
+Then(
+  "{string}'s snapshot omits all projectiles",
+  function (this: TestWorld, observer: string) {
+    const snap = this.data.get(snapKey(this, observer)) as SnapshotMsg | undefined;
+    assert.ok(snap, "Build a snapshot first");
+    assert.ok(
+      !snap.entities.some((e) => e.kind === "projectile"),
+      `Snapshot for ${observer} should omit all projectiles`
+    );
+  }
+);
+
+Then(
   "{string}'s view radius is greater than {float}",
   function (this: TestWorld, observer: string, threshold: number) {
     const sim = this.requireSim();
@@ -108,5 +136,27 @@ Then(
       Math.abs(snap.you.mass - mass) < 0.5,
       `Snapshot self mass ${snap.you.mass} ≠ ${mass}`
     );
+  }
+);
+
+Then(
+  "{string}'s snapshot self moveSpeed is {float}",
+  function (this: TestWorld, observer: string, expected: number) {
+    const snap = this.data.get(snapKey(this, observer)) as SnapshotMsg | undefined;
+    assert.ok(snap, "Build a snapshot first");
+    assert.ok(
+      Math.abs(snap.you.moveSpeed - expected) < 0.5,
+      `Snapshot self moveSpeed ${snap.you.moveSpeed} ≠ ${expected}`
+    );
+  }
+);
+
+Then(
+  "{string}'s snapshot self velocity points in +X",
+  function (this: TestWorld, observer: string) {
+    const snap = this.data.get(snapKey(this, observer)) as SnapshotMsg | undefined;
+    assert.ok(snap, "Build a snapshot first");
+    assert.ok(snap.you.vx > 0, `Snapshot self vx ${snap.you.vx} not > 0`);
+    assert.equal(typeof snap.you.vy, "number", "Snapshot self vy missing");
   }
 );

@@ -28,6 +28,13 @@ export const PELLET = {
   targetCount: 600,
   spawnPerTick: 4,
   radius: 6,
+  /**
+   * Spawn-distribution exponent biasing pellets toward the arena center.
+   * 1 = uniform; higher concentrates density centrally while edges still get
+   * pellets (edge density scales as ~1/centerBias). Counteracts AI fish grazing
+   * the middle bare and leaving only the outer ring stocked.
+   */
+  centerBias: 2,
 } as const;
 
 /**
@@ -171,7 +178,17 @@ export function massDecayPerSec(mass: number): number {
 }
 
 export function xpForLevel(level: number): number {
-  return Math.floor(3 * Math.pow(1.05, level));
+  return Math.floor(6 * Math.pow(1.1, level - 1));
+}
+
+/**
+ * Map a uniform sample u in [0,1) to a [0,1) coordinate biased toward the
+ * center (0.5). bias=1 is uniform; higher pushes density toward 0.5 while still
+ * reaching both edges. Apply per-axis to spread spawns over a rectangle.
+ */
+export function centerBiasedUnit(u: number, bias: number): number {
+  const d = u - 0.5;
+  return 0.5 + Math.sign(d) * Math.pow(Math.abs(2 * d), bias) / 2;
 }
 
 /** XP awarded to the killer when their victim dies. Higher-level victims drop more. */

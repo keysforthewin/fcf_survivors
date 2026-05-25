@@ -38,7 +38,7 @@ Feature: Combined slot cap
     And "Maxed" has weapon "pulse" at level 5
     And "Maxed" has passive "fin" at stack 5
     And "Maxed" has passive "gulp" at stack 5
-    And "Maxed" has accumulated 3 XP
+    And "Maxed" has accumulated 6 XP
     When level-ups are processed
     Then "Maxed" has level 2
     And "Maxed" has no pending level-up modal

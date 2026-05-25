@@ -1,4 +1,6 @@
 export * from "./balance.js";
+export * from "./movement.js";
+export * from "./interp.js";
 export * from "./entities.js";
 export * from "./protocol.js";
 export * from "./weapons.js";

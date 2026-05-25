@@ -2,8 +2,8 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, MOUTH, fishRadius, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
-import type { PassiveId, WeaponId } from "@fcf/shared";
+import { ARENA, FISH, MOUTH, TICK, fishRadius, stepFishMovement, sampleAt, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
@@ -27,13 +27,9 @@ interface FishState {
   name: string;
   color: string;
   isAi: boolean;
-  // interp
-  prevX: number;
-  prevY: number;
-  prevTime: number;
-  nextX: number;
-  nextY: number;
-  nextTime: number;
+  /** Server-time-stamped position buffer, sampled at renderTime each frame (R2). */
+  samples: TimedSample[];
+  /** Last authoritative velocity — only used by the self boost-trail FX (self is predicted). */
   vx: number;
   vy: number;
   mass: number;
@@ -57,12 +53,8 @@ interface FruitState {
 
 interface ChunkState {
   id: number;
-  prevX: number;
-  prevY: number;
-  prevTime: number;
-  nextX: number;
-  nextY: number;
-  nextTime: number;
+  /** Server-time-stamped position buffer, sampled at renderTime each frame (R2). */
+  samples: TimedSample[];
   mass: number;
   color: number;
   gfx: Graphics;
@@ -70,12 +62,9 @@ interface ChunkState {
 
 interface ProjectileState {
   id: number;
-  prevX: number;
-  prevY: number;
-  prevTime: number;
-  nextX: number;
-  nextY: number;
-  nextTime: number;
+  /** Server-time-stamped position buffer, sampled at renderTime each frame (R2). */
+  samples: TimedSample[];
+  /** First-seen launch velocity — orientation fallback when derived velocity is ~0 (spawn). */
   vx: number;
   vy: number;
   radius: number;
@@ -86,6 +75,23 @@ interface ProjectileState {
 }
 
 const INTERP_DELAY_MS = 100;
+/** Cap on velocity-based extrapolation past the newest sample — avoids overshoot on dropped packets. */
+const MAX_EXTRAP_MS = 100;
+/** Per-entity sample-buffer length. 6 ticks ≈ 300ms history covers the 100ms delay + 100ms extrap + jitter. */
+const SAMPLE_CAP = 6;
+
+/** Append a server-time-stamped position sample, de-duping a repeated timestamp and capping length. */
+function pushSample(samples: TimedSample[], t: number, x: number, y: number): void {
+  const last = samples[samples.length - 1];
+  if (last && last.t === t) { last.x = x; last.y = y; return; }
+  samples.push({ t, x, y });
+  if (samples.length > SAMPLE_CAP) samples.shift();
+}
+
+/** Replay step for client-side prediction — matches the server tick cadence. */
+const PREDICT_STEP_S = TICK.ms / 1000;
+/** Reconciliation error above this (world px) teleports instead of easing — looks better than sliding. */
+const PREDICT_SNAP_PX = 120;
 
 /** Emoji used for fruit pickups — kind is purely cosmetic, chosen per-fruit by id. */
 const FRUIT_EMOJI = [
@@ -140,6 +146,20 @@ export class ArenaScene {
   private selfId = 0;
   private serverNow = 0;
   private clientServerOffset = 0;
+  /** Smoothed server-minus-client wall-clock offset (Date.now domain) driving R2 interpolation. */
+  private interpOffset = 0;
+  private interpOffsetInit = false;
+  // --- client-side prediction (self fish only) ---
+  /** Inputs sent but possibly not yet acked by the server, replayed each frame. */
+  private inputBuffer: Array<{ seq: number; vx: number; vy: number; boost: boolean; sentAt: number }> = [];
+  /** Last authoritative self state from the you-block; null until the first snapshot. */
+  private selfAuth: { x: number; y: number; vx: number; vy: number; moveSpeed: number; mass: number; boostUntil: number } | null = null;
+  /** Last input seq the server reported applying (SnapshotMsg.ackSeq). */
+  private selfAckSeq = 0;
+  /** Decaying offset that carries the rendered self position across reconciliation re-anchors. */
+  private renderOffset = { x: 0, y: 0 };
+  /** When true, the next reconciliation hard-snaps (initial spawn / respawn) instead of easing. */
+  private predictSnapPending = true;
   private lastFrameTime = performance.now();
   private inputInterval: number | null = null;
   private callbacks: ArenaCallbacks;
@@ -374,8 +394,73 @@ export class ArenaScene {
     // 20 Hz input send
     this.inputInterval = window.setInterval(() => {
       const s = this.input.state;
-      this.net.input(s.vx, s.vy, s.boost);
+      const seq = this.net.input(s.vx, s.vy, s.boost);
+      this.recordInput(seq, s.vx, s.vy, s.boost);
     }, 50);
+  }
+
+  /** Buffer a sent input for prediction replay, normalizing exactly as the server does (only when mag > 1). */
+  private recordInput(seq: number, vx: number, vy: number, boost: boolean): void {
+    const mag = Math.hypot(vx, vy);
+    if (mag > 1) { vx /= mag; vy /= mag; }
+    this.inputBuffer.push({ seq, vx, vy, boost, sentAt: performance.now() });
+    if (this.inputBuffer.length > 64) this.inputBuffer.shift();
+  }
+
+  /**
+   * Predict the self fish's current position by replaying inputs the server hasn't acked yet,
+   * starting from the last authoritative state. Each acked-pending input is replayed at the
+   * server tick cadence; the newest input gets a trailing partial step up to `now` for
+   * smooth sub-tick motion. Boost and the level-up freeze are evaluated authoritatively.
+   */
+  private computePredicted(now: number): { x: number; y: number; vx: number; vy: number } {
+    const auth = this.selfAuth!;
+    const s = { x: auth.x, y: auth.y, vx: auth.vx, vy: auth.vy };
+    const estServerNow = Date.now() + this.clientServerOffset;
+    const boostMult = estServerNow < auth.boostUntil ? FISH.boostMultiplier : 1;
+    // Mirror the server freeze: target is zero while the level-up modal is open and not dismissed.
+    const frozen = !!this.levelUpMount && !this.levelUpMount.isDismissed();
+    const pending = this.inputBuffer.filter((i) => i.seq > this.selfAckSeq);
+    for (let i = 0; i < pending.length; i++) {
+      const inp = pending[i]!;
+      const tvx = frozen ? 0 : inp.vx;
+      const tvy = frozen ? 0 : inp.vy;
+      const dt = i === pending.length - 1
+        ? Math.max(0, Math.min(PREDICT_STEP_S, (now - inp.sentAt) / 1000))
+        : PREDICT_STEP_S;
+      stepFishMovement(s, tvx, tvy, auth.moveSpeed, boostMult, auth.mass, dt);
+    }
+    return s;
+  }
+
+  /**
+   * Re-anchor prediction to the authoritative you-block and fold the resulting visual
+   * discontinuity into renderOffset (which decays to zero in tick) so the swap is invisible.
+   */
+  private reconcileSelf(msg: SnapshotMsg): void {
+    const you = msg.you!;
+    const now = performance.now();
+    const firstAnchor = this.selfAuth === null || this.predictSnapPending;
+    const oldPred = firstAnchor ? null : this.computePredicted(now);
+    this.selfAuth = {
+      x: you.x, y: you.y, vx: you.vx, vy: you.vy,
+      moveSpeed: you.moveSpeed, mass: you.mass, boostUntil: you.boostUntil,
+    };
+    this.selfAckSeq = msg.ackSeq;
+    this.inputBuffer = this.inputBuffer.filter((i) => i.seq > this.selfAckSeq);
+    if (firstAnchor) {
+      this.renderOffset.x = 0;
+      this.renderOffset.y = 0;
+      this.predictSnapPending = false;
+      return;
+    }
+    const newPred = this.computePredicted(now);
+    this.renderOffset.x += oldPred!.x - newPred.x;
+    this.renderOffset.y += oldPred!.y - newPred.y;
+    if (Math.hypot(this.renderOffset.x, this.renderOffset.y) > PREDICT_SNAP_PX) {
+      this.renderOffset.x = 0;
+      this.renderOffset.y = 0;
+    }
   }
 
   private drawBackground(): void {
@@ -459,6 +544,16 @@ export class ArenaScene {
     this.serverNow = msg.serverNow;
     this.clientServerOffset = msg.serverNow - Date.now();
 
+    // Smoothed clock for R2 interpolation: track server wall time, rejecting per-packet
+    // jitter via EMA but snapping on first sample / a big stall / tab refocus.
+    const offsetSample = msg.serverNow - Date.now();
+    if (!this.interpOffsetInit || Math.abs(offsetSample - this.interpOffset) > 250) {
+      this.interpOffset = offsetSample;
+      this.interpOffsetInit = true;
+    } else {
+      this.interpOffset += (offsetSample - this.interpOffset) * 0.1;
+    }
+
     if (msg.you) {
       // FX: detect changes to self state
       const massBefore = this.prevYouMass;
@@ -505,17 +600,21 @@ export class ArenaScene {
         this.fishHeading.set(this.selfId, { hx: msg.you.hx, hy: msg.you.hy });
       }
 
-      // self fish — update directly (server sends welcome with selfId before snapshots)
-      if (this.selfId) this.applySelfFish(msg);
+      // self fish — predicted locally, reconciled against the authoritative you-block
+      // (server sends welcome with selfId before snapshots)
+      if (this.selfId) {
+        this.ensureSelfSprite(msg);
+        this.reconcileSelf(msg);
+      }
     }
 
     for (const ent of msg.entities) {
       switch (ent.kind) {
-        case "fish": this.applyFishDelta(ent, recvTime); break;
+        case "fish": this.applyFishDelta(ent, msg.serverNow); break;
         case "pellet": this.applyPelletDelta(ent); break;
         case "fruit": this.applyFruitDelta(ent); break;
-        case "chunk": this.applyChunkDelta(ent, recvTime); break;
-        case "projectile": this.applyProjectileDelta(ent, recvTime); break;
+        case "chunk": this.applyChunkDelta(ent, msg.serverNow); break;
+        case "projectile": this.applyProjectileDelta(ent, msg.serverNow); break;
       }
     }
 
@@ -610,12 +709,15 @@ export class ArenaScene {
     if (f.mass > 18) snd.playShatter(0.7);
   }
 
-  private applySelfFish(msg: SnapshotMsg): void {
+  /**
+   * Ensure the self fish's sprite exists and its mass is current. Position is driven by
+   * prediction in tick() (not the interpolation keyframes used for other fish).
+   */
+  private ensureSelfSprite(msg: SnapshotMsg): void {
     const you = msg.you;
     if (!you) return;
     const key = this.selfId;
     let f = this.fishes.get(key);
-    const now = performance.now();
     if (!f) {
       const name = (window as any).__playerName ?? "You";
       const color = (window as any).__playerColor ?? "#ffd97f";
@@ -626,30 +728,23 @@ export class ArenaScene {
         name,
         color,
         isAi: false,
-        prevX: you.x, prevY: you.y, prevTime: now,
-        nextX: you.x, nextY: you.y, nextTime: now,
-        vx: 0, vy: 0,
+        // Self is predicted, never sampled from this buffer — seed it for type-correctness only.
+        samples: [{ t: msg.serverNow, x: you.x, y: you.y }],
+        vx: you.vx, vy: you.vy,
         mass: you.mass,
         sprite,
       };
       this.fishes.set(key, f);
     }
-    f.prevX = f.nextX;
-    f.prevY = f.nextY;
-    f.prevTime = f.nextTime;
-    f.nextX = you.x;
-    f.nextY = you.y;
-    f.nextTime = now + INTERP_DELAY_MS;
     f.mass = you.mass;
   }
 
-  private applyFishDelta(ent: EntityDelta, recvTime: number): void {
+  private applyFishDelta(ent: EntityDelta, serverNow: number): void {
     if (ent.hx !== undefined && ent.hy !== undefined) {
       this.fishHeading.set(ent.id, { hx: ent.hx, hy: ent.hy });
     }
-    if (ent.id === this.selfId) return; // handled by applySelfFish
+    if (ent.id === this.selfId) return; // self is predicted (ensureSelfSprite + reconcileSelf), not interpolated
     let f = this.fishes.get(ent.id);
-    const now = recvTime;
     if (!f) {
       const sprite = new FishSprite(ent.name ?? "?", ent.color ?? "#7fcfff", ent.isAi ?? false);
       this.fishLayer.addChild(sprite.container);
@@ -658,8 +753,7 @@ export class ArenaScene {
         name: ent.name ?? "?",
         color: ent.color ?? "#7fcfff",
         isAi: ent.isAi ?? false,
-        prevX: ent.x, prevY: ent.y, prevTime: now,
-        nextX: ent.x, nextY: ent.y, nextTime: now + INTERP_DELAY_MS,
+        samples: [{ t: serverNow, x: ent.x, y: ent.y }],
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
         mass: ent.mass ?? 10,
         sprite,
@@ -667,12 +761,7 @@ export class ArenaScene {
       this.fishes.set(ent.id, f);
       return;
     }
-    f.prevX = f.nextX;
-    f.prevY = f.nextY;
-    f.prevTime = f.nextTime;
-    f.nextX = ent.x;
-    f.nextY = ent.y;
-    f.nextTime = now + INTERP_DELAY_MS;
+    pushSample(f.samples, serverNow, ent.x, ent.y);
     if (ent.vx !== undefined) f.vx = ent.vx;
     if (ent.vy !== undefined) f.vy = ent.vy;
     if (ent.mass !== undefined) f.mass = ent.mass;
@@ -717,9 +806,8 @@ export class ArenaScene {
     }
   }
 
-  private applyChunkDelta(ent: EntityDelta, recvTime: number): void {
+  private applyChunkDelta(ent: EntityDelta, serverNow: number): void {
     let c = this.chunks.get(ent.id);
-    const now = recvTime;
     if (!c) {
       const gfx = new Graphics();
       const color = ent.color ? parseColor(ent.color) : 0xffd97f;
@@ -733,8 +821,7 @@ export class ArenaScene {
       this.chunkLayer.addChild(gfx);
       c = {
         id: ent.id,
-        prevX: ent.x, prevY: ent.y, prevTime: now,
-        nextX: ent.x, nextY: ent.y, nextTime: now + INTERP_DELAY_MS,
+        samples: [{ t: serverNow, x: ent.x, y: ent.y }],
         mass: ent.mass ?? 4,
         color,
         gfx,
@@ -742,22 +829,19 @@ export class ArenaScene {
       this.chunks.set(ent.id, c);
       return;
     }
-    c.prevX = c.nextX;
-    c.prevY = c.nextY;
-    c.prevTime = c.nextTime;
-    c.nextX = ent.x;
-    c.nextY = ent.y;
-    c.nextTime = now + INTERP_DELAY_MS;
+    pushSample(c.samples, serverNow, ent.x, ent.y);
   }
 
-  private applyProjectileDelta(ent: EntityDelta, recvTime: number): void {
-    const now = recvTime;
+  private applyProjectileDelta(ent: EntityDelta, serverNow: number): void {
+    // Sprite/blob ages are measured against the frame clock (performance.now), so spawn
+    // times stay in that domain; the interpolation buffer uses serverNow (Date.now domain).
+    const spawnNow = performance.now();
     // Trail weapons (ink/kraken) render as static, age-fading diffusing blobs on the
     // blurred inkLayer rather than moving projectile sprites. They never move, so we
     // create on first-seen and ignore subsequent deltas (weaponId only arrives once).
     if (this.inkBlobs.has(ent.id)) return;
     if (ent.weaponId && WEAPONS[ent.weaponId as WeaponId]?.kind === "trail") {
-      const blob = new InkBlob(ent.weaponId, ent.radius ?? 30, now, ent.x, ent.y);
+      const blob = new InkBlob(ent.weaponId, ent.radius ?? 30, spawnNow, ent.x, ent.y);
       this.inkLayer.addChild(blob.sprite);
       this.inkBlobs.set(ent.id, blob);
       return;
@@ -766,28 +850,22 @@ export class ArenaScene {
     if (!p) {
       const weaponId = ent.weaponId ?? "bubble";
       const radius = ent.radius ?? 8;
-      const sprite = new ProjectileSprite(weaponId, radius, now);
+      const sprite = new ProjectileSprite(weaponId, radius, spawnNow);
       this.projectileLayer.addChild(sprite.container);
       sprite.setTransform(ent.x, ent.y, ent.vx ?? 0, ent.vy ?? 0);
       p = {
         id: ent.id,
-        prevX: ent.x, prevY: ent.y, prevTime: now,
-        nextX: ent.x, nextY: ent.y, nextTime: now + INTERP_DELAY_MS,
+        samples: [{ t: serverNow, x: ent.x, y: ent.y }],
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
         radius,
         weaponId,
-        spawnTime: now,
+        spawnTime: spawnNow,
         sprite,
       };
       this.projectiles.set(ent.id, p);
       return;
     }
-    p.prevX = p.nextX;
-    p.prevY = p.nextY;
-    p.prevTime = p.nextTime;
-    p.nextX = ent.x;
-    p.nextY = ent.y;
-    p.nextTime = now + INTERP_DELAY_MS;
+    pushSample(p.samples, serverNow, ent.x, ent.y);
     if (ent.vx !== undefined) p.vx = ent.vx;
     if (ent.vy !== undefined) p.vy = ent.vy;
   }
@@ -840,38 +918,50 @@ export class ArenaScene {
     const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
 
-    // interpolate and render fish
-    const renderTime = now - INTERP_DELAY_MS;
+    // Sample other entities at server-time minus the interp delay (Date.now domain, to match
+    // the buffered sample timestamps). The smoothed offset keeps this from jittering frame-to-frame.
+    const renderTime = Date.now() + this.interpOffset - INTERP_DELAY_MS;
     const fishSpan = perf.begin("fish-interp");
     for (const f of this.fishes.values()) {
-      const span = Math.max(1, f.nextTime - f.prevTime);
-      const t = Math.max(0, Math.min(1, (now - f.prevTime) / span));
-      const x = f.prevX + (f.nextX - f.prevX) * t;
-      const y = f.prevY + (f.nextY - f.prevY) * t;
-      const vx = (f.nextX - f.prevX) / (span / 1000);
-      const vy = (f.nextY - f.prevY) / (span / 1000);
+      // Self fish: client-side prediction, not the 100 ms interpolation buffer — so your
+      // own movement tracks input with no perceived lag. renderOffset eases reconciliation.
+      if (this.mode === "play" && f.id === this.selfId && this.selfAuth) {
+        const p = this.computePredicted(now);
+        const decay = Math.pow(0.001, dt);
+        this.renderOffset.x *= decay;
+        this.renderOffset.y *= decay;
+        if (Math.abs(this.renderOffset.x) < 0.05) this.renderOffset.x = 0;
+        if (Math.abs(this.renderOffset.y) < 0.05) this.renderOffset.y = 0;
+        const serverHeading = this.fishHeading.get(f.id);
+        f.sprite.setTransform(p.x + this.renderOffset.x, p.y + this.renderOffset.y, p.vx, p.vy, serverHeading, dt);
+        f.sprite.update(f.mass, dt);
+        continue;
+      }
+      const s = sampleAt(f.samples, renderTime, MAX_EXTRAP_MS);
+      if (!s) continue;
       const serverHeading = this.fishHeading.get(f.id);
-      f.sprite.setTransform(x, y, vx, vy, serverHeading, dt);
+      f.sprite.setTransform(s.x, s.y, s.vx, s.vy, serverHeading, dt);
       f.sprite.update(f.mass, dt);
     }
     fishSpan.end();
 
     const chunkSpan = perf.begin("chunk-interp");
     for (const c of this.chunks.values()) {
-      const span = Math.max(1, c.nextTime - c.prevTime);
-      const t = Math.max(0, Math.min(1, (now - c.prevTime) / span));
-      c.gfx.x = c.prevX + (c.nextX - c.prevX) * t;
-      c.gfx.y = c.prevY + (c.nextY - c.prevY) * t;
+      const s = sampleAt(c.samples, renderTime, MAX_EXTRAP_MS);
+      if (!s) continue;
+      c.gfx.x = s.x;
+      c.gfx.y = s.y;
     }
     chunkSpan.end();
 
     const projSpan = perf.begin("proj-interp");
     for (const p of this.projectiles.values()) {
-      const span = Math.max(1, p.nextTime - p.prevTime);
-      const t = Math.max(0, Math.min(1, (now - p.prevTime) / span));
-      const px = p.prevX + (p.nextX - p.prevX) * t;
-      const py = p.prevY + (p.nextY - p.prevY) * t;
-      p.sprite.setTransform(px, py, p.vx, p.vy);
+      const s = sampleAt(p.samples, renderTime, MAX_EXTRAP_MS);
+      if (!s) continue;
+      // Use the derived (buffered) velocity for orientation once it's meaningful; fall back to
+      // the launch velocity at spawn so a brand-new sprite doesn't flicker to rotation 0.
+      const useDerived = s.vx * s.vx + s.vy * s.vy > 1;
+      p.sprite.setTransform(s.x, s.y, useDerived ? s.vx : p.vx, useDerived ? s.vy : p.vy);
     }
     for (const blob of this.inkBlobs.values()) blob.update(now);
     projSpan.end();
@@ -1104,6 +1194,13 @@ export class ArenaScene {
       if (me) { me.sprite.destroy(); this.fishes.delete(this.selfId); }
     }
     this.selfId = 0;
+    // Reset prediction so stale unacked inputs can't fling the next life's fish.
+    this.selfAuth = null;
+    this.inputBuffer = [];
+    this.selfAckSeq = 0;
+    this.renderOffset.x = 0;
+    this.renderOffset.y = 0;
+    this.predictSnapPending = true;
     this.spectatorAnchor = null;
     // Seed camera at the last known self position so the transition isn't jarring.
     if (this.prevSelfX || this.prevSelfY) {

@@ -1,7 +1,8 @@
 import type { EntityDelta, HitEvent, SnapshotMsg, YouPassiveSlot, YouWeaponSlot, ZapEvent } from "@fcf/shared";
-import { MASS_DECAY, viewRadius, xpForLevel } from "@fcf/shared";
+import { MASS_DECAY, MAX_PROJECTILE_RADIUS, viewRadius, xpForLevel } from "@fcf/shared";
 import type { World } from "../sim/world.ts";
-import type { Fish, Projectile } from "../sim/entity.ts";
+import type { Chunk, Fish, Fruit, Pellet, Projectile } from "../sim/entity.ts";
+import { getMoveSpeed } from "../sim/passives.ts";
 
 export class ClientView {
   // last sent state per entity id, used for change detection
@@ -57,6 +58,9 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
   const r2 = r * r;
   const seen = new Set<number>();
   const entities: EntityDelta[] = [];
+  // Reused across the per-type interest queries below (mirrors world.step's scratch).
+  // Hashes are rebuilt against end-of-tick state in the tick loop before snapshots run.
+  const scratch: any[] = [];
 
   const considerFish = (f: Fish): void => {
     if (!f.alive && f.id !== self.id) return;
@@ -73,9 +77,13 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass });
   };
 
-  for (const f of world.fish.values()) considerFish(f);
+  scratch.length = 0;
+  world.fishHash.query(self.x, self.y, r, scratch);
+  for (const f of scratch as Fish[]) considerFish(f);
 
-  for (const p of world.pellets.values()) {
+  scratch.length = 0;
+  world.pelletHash.query(self.x, self.y, r, scratch);
+  for (const p of scratch as Pellet[]) {
     const dx = p.x - self.x;
     const dy = p.y - self.y;
     if (dx * dx + dy * dy > r2) continue;
@@ -87,7 +95,9 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     }
   }
 
-  for (const fr of world.fruits.values()) {
+  scratch.length = 0;
+  world.fruitHash.query(self.x, self.y, r, scratch);
+  for (const fr of scratch as Fruit[]) {
     const dx = fr.x - self.x;
     const dy = fr.y - self.y;
     if (dx * dx + dy * dy > r2) continue;
@@ -99,7 +109,9 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     }
   }
 
-  for (const c of world.chunks.values()) {
+  scratch.length = 0;
+  world.chunkHash.query(self.x, self.y, r, scratch);
+  for (const c of scratch as Chunk[]) {
     const dx = c.x - self.x;
     const dy = c.y - self.y;
     if (dx * dx + dy * dy > r2) continue;
@@ -114,7 +126,11 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     view.prevSent.set(c.id, { kind: "chunk", x: c.x, y: c.y });
   }
 
-  for (const proj of world.projectiles.values()) {
+  // Pad the query by the largest possible projectile radius so a wide pulse ring whose
+  // center is outside view but whose body reaches in is still considered (see test below).
+  scratch.length = 0;
+  world.projectileHash.query(self.x, self.y, r + MAX_PROJECTILE_RADIUS, scratch);
+  for (const proj of scratch as Projectile[]) {
     const dx = proj.x - self.x;
     const dy = proj.y - self.y;
     // include projectiles within view OR within their own radius of self (so pulse rings always show)
@@ -154,8 +170,11 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     you: {
       x: self.x,
       y: self.y,
+      vx: self.vx,
+      vy: self.vy,
       hx: encodeHeading(self.headingX),
       hy: encodeHeading(self.headingY),
+      moveSpeed: getMoveSpeed(self),
       mass: self.mass,
       maxMass: MASS_DECAY.maxMass,
       xp: self.xp,

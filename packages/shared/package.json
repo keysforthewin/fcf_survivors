@@ -10,6 +10,9 @@
     "./balance": "./src/balance.ts",
     "./entities": "./src/entities.ts"
   },
+  "scripts": {
+    "test": "bun test"
+  },
   "dependencies": {
     "zod": "^3.23.0"
   }

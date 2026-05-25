@@ -1,4 +1,4 @@
-import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, xpDroppedOnDeath } from "@fcf/shared";
+import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, centerBiasedUnit, clampToArena, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, stepFishMovement, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
 import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
@@ -61,6 +61,25 @@ export class World {
 
   nextId(): number {
     return this.idCounter++;
+  }
+
+  /**
+   * Clear and repopulate the per-type spatial hashes from current entity state.
+   * Called mid-`step()` for collision queries, and again from the tick loop after
+   * all mutation (deaths/chunk-spawn/projectile-fire) so per-socket snapshot interest
+   * queries see fresh end-of-tick state. Only alive fish are inserted.
+   */
+  rebuildSpatialHashes(): void {
+    this.fishHash.clear();
+    this.pelletHash.clear();
+    this.fruitHash.clear();
+    this.chunkHash.clear();
+    this.projectileHash.clear();
+    for (const f of this.fish.values()) if (f.alive) this.fishHash.insert(f.x, f.y, f);
+    for (const p of this.pellets.values()) this.pelletHash.insert(p.x, p.y, p);
+    for (const fr of this.fruits.values()) this.fruitHash.insert(fr.x, fr.y, fr);
+    for (const c of this.chunks.values()) this.chunkHash.insert(c.x, c.y, c);
+    for (const p of this.projectiles.values()) this.projectileHash.insert(p.x, p.y, p);
   }
 
   spawnPlayer(name: string, color: string, socketId: string): Fish {
@@ -217,8 +236,8 @@ export class World {
     const p: Pellet = {
       id: this.nextId(),
       kind: "pellet",
-      x: this.rng() * ARENA.width,
-      y: this.rng() * ARENA.height,
+      x: centerBiasedUnit(this.rng(), PELLET.centerBias) * ARENA.width,
+      y: centerBiasedUnit(this.rng(), PELLET.centerBias) * ARENA.height,
       color: PELLET_PALETTE[Math.floor(this.rng() * PELLET_PALETTE.length)]!,
     };
     this.pellets.set(p.id, p);
@@ -305,16 +324,13 @@ export class World {
       if (!f.alive) continue;
       if (!f.isAi) {
         if (f.boost && now >= f.boostUntil) f.boost = false;
-        const baseSpeed = getMoveSpeed(f);
-        const speed = baseSpeed * (f.boost ? FISH.boostMultiplier : 1);
-        const desiredVx = f.targetVx * speed;
-        const desiredVy = f.targetVy * speed;
-        const accel = 10 * dtSec;
-        f.vx += (desiredVx - f.vx) * accel;
-        f.vy += (desiredVy - f.vy) * accel;
+        // Player movement (velocity smoothing + integrate + arena clamp) lives in
+        // @fcf/shared so the client predictor runs identical physics. See movement.ts.
+        stepFishMovement(f, f.targetVx, f.targetVy, getMoveSpeed(f), f.boost ? FISH.boostMultiplier : 1, f.mass, dtSec);
+      } else {
+        f.x += f.vx * dtSec;
+        f.y += f.vy * dtSec;
       }
-      f.x += f.vx * dtSec;
-      f.y += f.vy * dtSec;
       // Rate-limited heading: rotate current heading toward the velocity direction at
       // most maxTurnRate * dt per tick. AI fish use a slower rate so they visibly arc
       // through direction changes instead of snapping.
@@ -325,12 +341,8 @@ export class World {
         f.headingX = nhx;
         f.headingY = nhy;
       }
-      // clamp to arena
-      const r = fishRadius(f.mass);
-      if (f.x < r) { f.x = r; f.vx = 0; }
-      if (f.x > ARENA.width - r) { f.x = ARENA.width - r; f.vx = 0; }
-      if (f.y < r) { f.y = r; f.vy = 0; }
-      if (f.y > ARENA.height - r) { f.y = ARENA.height - r; f.vy = 0; }
+      // clamp AI to arena (players are already clamped inside stepFishMovement above)
+      if (f.isAi) clampToArena(f, f.mass);
     }
 
     // integrate chunks (drift + decay)
@@ -352,16 +364,7 @@ export class World {
     }
 
     // rebuild spatial hashes for collision
-    this.fishHash.clear();
-    this.pelletHash.clear();
-    this.fruitHash.clear();
-    this.chunkHash.clear();
-    this.projectileHash.clear();
-    for (const f of this.fish.values()) if (f.alive) this.fishHash.insert(f.x, f.y, f);
-    for (const p of this.pellets.values()) this.pelletHash.insert(p.x, p.y, p);
-    for (const fr of this.fruits.values()) this.fruitHash.insert(fr.x, fr.y, fr);
-    for (const c of this.chunks.values()) this.chunkHash.insert(c.x, c.y, c);
-    for (const p of this.projectiles.values()) this.projectileHash.insert(p.x, p.y, p);
+    this.rebuildSpatialHashes();
 
     // fire weapons for each living non-AI fish (also ticks orbital/trail)
     for (const f of this.fish.values()) {

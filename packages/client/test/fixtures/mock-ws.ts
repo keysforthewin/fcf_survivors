@@ -46,6 +46,9 @@ export async function installMockWebSocket(page: Page): Promise<void> {
       const you = includeYou ? {
         x: 4000,
         y: 4000,
+        vx: 0,
+        vy: 0,
+        moveSpeed: 640,
         hx: 1,
         hy: 0,
         mass: 10,

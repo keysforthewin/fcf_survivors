@@ -324,6 +324,11 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       ws.data.levelUpSentDrawId = fish.pendingLevelUpDrawId;
     }
 
+    // Rebuild spatial hashes against end-of-tick state (this-tick projectiles fired,
+    // death-chunks spawned, dead fish removed) so the per-socket interest queries in
+    // buildSnapshot see fresh, correct entities rather than the stale mid-step hash.
+    world.rebuildSpatialHashes();
+
     // send snapshots
     for (const ws of sockets.values()) {
       const fid = ws.data.fishId;

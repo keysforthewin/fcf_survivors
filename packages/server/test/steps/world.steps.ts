@@ -134,6 +134,28 @@ Given(
   }
 );
 
+/* -------- Projectile seeding -------- */
+
+Given(
+  "a projectile at \\({float}, {float}\\) with radius {float}",
+  function (this: TestWorld, x: number, y: number, radius: number) {
+    const sim = ensureSim(this);
+    sim.world.spawnProjectile({
+      ownerId: 0,
+      weaponId: "pulse",
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      damage: 0,
+      radius,
+      expiresAt: sim.clock.now() + 60_000,
+      behavior: "static",
+      reHitMs: 0,
+    });
+  }
+);
+
 /* -------- Loadout -------- */
 
 Given(
