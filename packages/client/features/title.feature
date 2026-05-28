@@ -1,5 +1,5 @@
 Feature: Title screen
-  The lobby gate: pick a name + colour, then dive in. Keeps the entry flow
+  The lobby gate: pick a name + fish species, then dive in. Keeps the entry flow
   pinned across UI tweaks.
 
   Background:
@@ -8,11 +8,11 @@ Feature: Title screen
 
   Scenario: Title overlay renders with name input and DIVE IN
     Then I see the title overlay
-    And the first color swatch is selected by default
+    And the default species is selected
 
-  Scenario: Selecting a new color updates the highlight
-    When I click the "#7fcfff" color swatch
-    Then the "#7fcfff" swatch is selected
+  Scenario: Selecting a new species updates the highlight
+    When I click the "blue-tang" species
+    Then the "blue-tang" species is selected
 
   Scenario: DIVE IN with a name sends a hello with that name
     When I type "Captain" into the name input
@@ -25,11 +25,11 @@ Feature: Title screen
     And I click DIVE IN
     Then the hello message sent to the server has name "Fish"
 
-  Scenario: Selected color is sent in the hello message
-    When I click the "#9affcf" color swatch
+  Scenario: Selected species is sent in the hello message
+    When I click the "blue-tang" species
     And I type "Bloop" into the name input
     And I click DIVE IN
-    Then the hello message sent to the server has color "#9affcf"
+    Then the hello message sent to the server has species "blue-tang"
 
   Scenario: Pressing Enter in the name input also submits
     When I type "Bloop" into the name input

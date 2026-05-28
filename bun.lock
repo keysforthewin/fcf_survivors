@@ -18,6 +18,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@fcf/shared": "workspace:*",
+        "@fontsource/outfit": "^5.2.8",
+        "@fontsource/space-grotesk": "^5.2.10",
         "pixi-filters": "^6.1.5",
         "pixi.js": "^8.5.0",
         "zod": "^3.23.0",
@@ -128,6 +130,10 @@
     "@fcf/server": ["@fcf/server@workspace:packages/server"],
 
     "@fcf/shared": ["@fcf/shared@workspace:packages/shared"],
+
+    "@fontsource/outfit": ["@fontsource/outfit@5.2.8", "", {}, "sha512-rXC6g0MqD7cOBjht0bMqc43qM6lRqDLML9KXsmg9uykz0wLQhy8Z/ajrMG6iyoT3NJR+MYgU+OEHp7uHoTb+Yw=="],
+
+    "@fontsource/space-grotesk": ["@fontsource/space-grotesk@5.2.10", "", {}, "sha512-XNXEbT74OIITPqw2H6HXwPDp85fy43uxfBwFR5PU+9sLnjuLj12KlhVM9nZVN6q6dlKjkuN8JisW/OBxwxgUew=="],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.4.11", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA=="],
 

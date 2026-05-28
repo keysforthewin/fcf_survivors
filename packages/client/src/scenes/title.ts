@@ -1,61 +1,85 @@
 import { initSound } from "../sound.ts";
-import { COLOR_PALETTE } from "../identity.ts";
+import { SPECIES, colorForSpecies, speciesById, DEFAULT_SPECIES_ID } from "@fcf/shared";
 
 export interface TitleResult {
   name: string;
   color: string;
+  species?: string;
 }
+
+const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/+$/, "");
+const fishSrc = (id: string) => `${BASE}/fish/${id}.png`;
 
 export function showTitle(prefill?: Partial<TitleResult>): Promise<TitleResult> {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "title-overlay";
     overlay.innerHTML = `
+      <div class="title-bg" style="background-image:url('${BASE}/ui/title-bg.jpg')"></div>
       <div class="title-card">
-        <h1>FRUIT CUP SURVIVORS</h1>
-        <p class="subtitle">Eat. Grow. Survive the deep.</p>
+        <div class="title-brand">
+          <h1 class="title-logo">Fruit Cup<span>Survivors</span></h1>
+          <p class="subtitle">Eat. Grow. Survive the deep.</p>
+        </div>
         <div class="field">
           <label for="name-input">Fish name</label>
           <input id="name-input" type="text" maxlength="16" placeholder="Bloop" autocomplete="off" />
         </div>
         <div class="field">
-          <label>Color</label>
-          <div class="color-row">
-            ${COLOR_PALETTE.map((c, i) => `
-              <div class="color-swatch${i === 0 ? " selected" : ""}" data-color="${c}" style="background:${c}"></div>
-            `).join("")}
+          <label>Choose your fish</label>
+          <div class="species-picker">
+            <div class="species-preview">
+              <img class="species-preview-img" alt="" />
+              <div class="species-preview-name"></div>
+            </div>
+            <div class="species-grid">
+              ${SPECIES.map(
+                (s) => `
+                <button type="button" class="species-tile" data-species="${s.id}" title="${s.label}" style="--tile-accent:${s.accentColor}">
+                  <img src="${fishSrc(s.id)}" alt="${s.label}" loading="lazy" draggable="false" />
+                </button>`,
+              ).join("")}
+            </div>
           </div>
         </div>
         <button class="play" type="button">DIVE IN</button>
-        <p class="help">Arrow keys / WASD to swim &middot; Space to boost (30s cooldown)</p>
+        <p class="help">Arrow keys / WASD to swim &middot; Space to boost</p>
       </div>
     `;
     document.body.appendChild(overlay);
+
     const input = overlay.querySelector("#name-input") as HTMLInputElement;
     input.value = prefill?.name ?? "";
-    let color = prefill?.color ?? COLOR_PALETTE[0]!;
 
-    const swatches = overlay.querySelectorAll(".color-swatch");
-    if (prefill?.color) {
-      swatches.forEach((el) => {
-        const s = el as HTMLElement;
-        s.classList.toggle("selected", s.dataset.color === prefill.color);
-      });
+    let species = prefill?.species && speciesById(prefill.species).id === prefill.species
+      ? prefill.species
+      : DEFAULT_SPECIES_ID;
+
+    const previewImg = overlay.querySelector(".species-preview-img") as HTMLImageElement;
+    const previewName = overlay.querySelector(".species-preview-name") as HTMLDivElement;
+    const tiles = [...overlay.querySelectorAll<HTMLButtonElement>(".species-tile")];
+    const card = overlay.querySelector(".title-card") as HTMLElement;
+
+    const selectSpecies = (id: string): void => {
+      species = id;
+      const def = speciesById(id);
+      previewImg.src = fishSrc(id);
+      previewName.textContent = def.label;
+      card.style.setProperty("--pick-accent", def.accentColor);
+      for (const t of tiles) t.classList.toggle("selected", t.dataset.species === id);
+    };
+
+    for (const t of tiles) {
+      t.addEventListener("click", () => selectSpecies(t.dataset.species!));
     }
-    swatches.forEach((el) => {
-      el.addEventListener("click", () => {
-        swatches.forEach((other) => other.classList.remove("selected"));
-        el.classList.add("selected");
-        color = (el as HTMLElement).dataset.color!;
-      });
-    });
+    selectSpecies(species);
 
-    const submit = () => {
-      // First user gesture — initialise audio (browsers require gesture for AudioContext.start).
+    const submit = (): void => {
+      // First user gesture — initialise audio (browsers require a gesture for AudioContext.start).
       initSound();
       const name = (input.value.trim() || "Fish").slice(0, 16);
       overlay.remove();
-      resolve({ name, color });
+      resolve({ name, color: colorForSpecies(species), species });
     };
 
     overlay.querySelector(".play")!.addEventListener("click", submit);

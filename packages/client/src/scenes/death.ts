@@ -1,5 +1,5 @@
 import type { EatenMsg, LeaderboardEntry } from "@fcf/shared";
-import { WEAPONS, PASSIVES } from "@fcf/shared";
+import { WEAPONS, PASSIVES, colorForSpecies, DEFAULT_SPECIES_ID } from "@fcf/shared";
 import { loadIdentity, saveIdentity } from "../identity.ts";
 import { mountIdentityEditor } from "../hud/identity-editor.ts";
 import { type SortKey, SORT_KEYS, SORT_LABEL, renderLeaderboardRows, formatStat, formatDuration, fetchLeaderboard } from "../hud/leaderboard-view.ts";
@@ -81,13 +81,15 @@ export function showDeath(
     overlay.querySelector("[data-gear]")!.addEventListener("click", () => {
       const stored = loadIdentity();
       const currentName = (window as any).__playerName ?? stored.name ?? "Fish";
-      const currentColor = (window as any).__playerColor ?? stored.color ?? "#ffd97f";
+      const currentSpecies = (window as any).__playerSpecies ?? stored.species ?? DEFAULT_SPECIES_ID;
       mountIdentityEditor({
-        current: { name: currentName, color: currentColor },
+        current: { name: currentName, species: currentSpecies },
         onSave: (next) => {
+          const color = colorForSpecies(next.species);
           (window as any).__playerName = next.name;
-          (window as any).__playerColor = next.color;
-          saveIdentity(next);
+          (window as any).__playerSpecies = next.species;
+          (window as any).__playerColor = color;
+          saveIdentity({ name: next.name, species: next.species, color });
         },
       });
     });

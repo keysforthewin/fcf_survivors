@@ -79,31 +79,41 @@ export class NetSocket {
       | HelloMsg
       | InputMsg
       | { t: "pickCard"; cardId: string }
-      | { t: "identity"; name?: string; color?: string }
+      | { t: "identity"; name?: string; color?: string; species?: string }
       | { t: "spectate"; camX: number; camY: number }
-      | { t: "respawn"; name?: string; color?: string }
+      | { t: "respawn"; name?: string; color?: string; species?: string }
       | { t: "discardWeapon"; weaponId: string }
       | { t: "discardPassive"; passiveId: string }
       | { t: "setLevelUpDismissed"; dismissed: boolean }
       | { t: "rerollCard"; cardId: string }
       | { t: "banishCard"; cardId: string }
+      | { t: "weaponHit"; projectileId: number; targetId: number }
   ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(obj));
   }
 
-  hello(name: string, color: string): void {
-    this.send({ t: "hello", name, color });
+  hello(name: string, color: string, species?: string): void {
+    this.send({ t: "hello", name, color, species });
   }
 
-  identity(name?: string, color?: string): void {
-    this.send({ t: "identity", name, color });
+  identity(name?: string, color?: string, species?: string): void {
+    this.send({ t: "identity", name, color, species });
   }
 
-  /** Send an input and return the seq it was tagged with (for client-side prediction). */
-  input(vx: number, vy: number, boost: boolean): number {
+  /**
+   * Send an input and return the seq it was tagged with (used for the F3 RTT gauge).
+   * `auth` carries the client-authoritative kinematics; when present the server writes
+   * them straight onto the fish instead of integrating from the vx/vy intent.
+   */
+  input(
+    vx: number,
+    vy: number,
+    boost: boolean,
+    auth?: { x: number; y: number; pvx: number; pvy: number; hx: number; hy: number },
+  ): number {
     this.seq++;
-    this.send({ t: "input", seq: this.seq, vx, vy, boost });
+    this.send({ t: "input", seq: this.seq, vx, vy, boost, ...(auth ?? {}) });
     return this.seq;
   }
 
@@ -111,8 +121,8 @@ export class NetSocket {
     this.send({ t: "spectate", camX, camY });
   }
 
-  respawn(name?: string, color?: string): void {
-    this.send({ t: "respawn", name, color });
+  respawn(name?: string, color?: string, species?: string): void {
+    this.send({ t: "respawn", name, color, species });
   }
 
   discardWeapon(weaponId: string): void {
@@ -133,6 +143,11 @@ export class NetSocket {
 
   banishCard(cardId: string): void {
     this.send({ t: "banishCard", cardId });
+  }
+
+  /** Report that one of our own projectiles visually hit an enemy fish (client-authoritative hit). */
+  weaponHit(projectileId: number, targetId: number): void {
+    this.send({ t: "weaponHit", projectileId, targetId });
   }
 
   isOpen(): boolean {

@@ -35,3 +35,17 @@ Feature: Player movement physics
     When "Alpha" sends input (-1, 0)
     And the world advances 2 seconds
     Then "Alpha" is inside the arena
+
+  Scenario: Client-authoritative state is trusted verbatim, not integrated
+    # The client owns its own fish: the server writes the reported kinematics and
+    # then leaves them alone — advancing the world must not move the fish from intent.
+    Given a player "Alpha" at (4000, 4000) with mass 10
+    When "Alpha" reports client position (4500, 4200) velocity (300, 0)
+    Then "Alpha" is at approximately (4500, 4200)
+    When the world advances 1 seconds
+    Then "Alpha" is at approximately (4500, 4200)
+
+  Scenario: Client-authoritative position is clamped to the arena
+    Given a player "Alpha" at (4000, 4000) with mass 10
+    When "Alpha" reports client position (-500, 4000) velocity (-300, 0)
+    Then "Alpha" is inside the arena

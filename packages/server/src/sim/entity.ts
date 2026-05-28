@@ -59,13 +59,33 @@ export interface Fish {
   vy: number;
   targetVx: number;
   targetVy: number;
+  /**
+   * True once a client has reported authoritative kinematics for this fish (see
+   * world.applyClientState). When set, world.step stops integrating this fish's
+   * movement and heading from intent — the owning client owns its position. AI
+   * fish never set this; they are always server-simulated.
+   */
+  clientAuthoritative: boolean;
   /** Unit-vector heading remembered when the fish was last moving. Used to aim weapons when idle. */
   headingX: number;
   headingY: number;
   mass: number;
   color: string;
+  /** Chosen fish species id (see shared/species.ts) → which photo sprite clients render. */
+  species: string;
   name: string;
   isAi: boolean;
+  /**
+   * Server tick on which this fish last bit edible prey. The snapshot builder turns
+   * `bitingTick === world.tick` into a transient `biting` flag so clients play the
+   * mouth-open chomp animation on the eater. Undefined until the first bite.
+   */
+  bitingTick?: number;
+  /**
+   * Wall-time until which this fish cannot be eaten (spawn protection). 0/undefined = none.
+   * Set on (re)spawn for players so any-contact eating doesn't instantly chomp a fresh fish.
+   */
+  spawnProtectedUntil?: number;
   boost: boolean;
   boostUntil: number;
   boostReadyAt: number;
@@ -194,9 +214,17 @@ export interface Projectile {
   /** Per-target last-hit timestamp for orbital/trail/pulse re-hit gating. */
   hits: Map<EntityId, number>;
   reHitMs: number;
-  /** Orbital-only: orbit angle + radius (relative to owner). */
+  /** Orbital-only: per-blade phase offset + orbit radius (relative to owner). */
   orbitPhase?: number;
   orbitRadius?: number;
+  /**
+   * Orbital-only, refreshed each tick: the blade's current absolute orbit angle and the
+   * angular velocity (rad/s). Shipped in the snapshot so clients animate the orbit at their
+   * own framerate (re-anchoring to orbitAngle each snapshot, extrapolating at orbitAngular
+   * between) instead of stepping at the 20 Hz snapshot cadence. See snapshot.projectileDelta.
+   */
+  orbitAngle?: number;
+  orbitAngular?: number;
 }
 
 export type AnyEntity = Fish | Pellet | Fruit | Chunk | Projectile;

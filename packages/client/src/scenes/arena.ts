@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, FISH, MOUTH, TICK, MAX_SLOTS, fishRadius, stepFishMovement, sampleAt, deadReckon, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -27,6 +27,7 @@ interface FishState {
   id: number;
   name: string;
   color: string;
+  species: string;
   isAi: boolean;
   /** Server-time-stamped position buffer, sampled at renderTime each frame (R2). */
   samples: TimedSample[];
@@ -79,13 +80,20 @@ interface ProjectileState {
   vy: number;
   /** Owner fish id (orbital anchoring). */
   ownerId: number;
-  /** Orbit offset = projectile pos − owner rendered pos, captured at the last delta (orbital only). */
-  orbitOffX: number;
-  orbitOffY: number;
+  /**
+   * Orbital only: absolute orbit angle (rad), angular velocity (rad/s) and orbit-ring radius (px),
+   * re-anchored each delta. The render loop computes `orbitAngle + orbitAngular * Δt` each frame
+   * so the orbit animates smoothly at the client framerate, anchored to the owner's rendered pos.
+   */
+  orbitAngle: number;
+  orbitAngular: number;
+  orbitRadius: number;
   radius: number;
   weaponId: string;
   /** performance.now() of first-seen — drives sprite age fades. */
   spawnTime: number;
+  /** Per-target performance.now() of the last client-reported hit, for local re-hit throttling. */
+  clientHitAt: Map<number, number>;
   sprite: ProjectileSprite | SaucerSprite;
 }
 
@@ -120,11 +128,6 @@ function pushSample(samples: TimedSample[], t: number, x: number, y: number): vo
   samples.push({ t, x, y });
   if (samples.length > SAMPLE_CAP) samples.shift();
 }
-
-/** Replay step for client-side prediction — matches the server tick cadence. */
-const PREDICT_STEP_S = TICK.ms / 1000;
-/** Reconciliation error above this (world px) teleports instead of easing — looks better than sliding. */
-const PREDICT_SNAP_PX = 120;
 
 /** Emoji used for fruit pickups — kind is purely cosmetic, chosen per-fruit by id. */
 const FRUIT_EMOJI = [
@@ -193,17 +196,35 @@ export class ArenaScene {
   private lastRttMs = 0;
   /** Timestamped received-byte counts within a ~1s sliding window, for bytes/sec. */
   private rxBytesWindow: Array<{ t: number; n: number }> = [];
-  // --- client-side prediction (self fish only) ---
-  /** Inputs sent but possibly not yet acked by the server, replayed each frame. */
-  private inputBuffer: Array<{ seq: number; vx: number; vy: number; boost: boolean; sentAt: number }> = [];
-  /** Last authoritative self state from the you-block; null until the first snapshot. */
-  private selfAuth: { x: number; y: number; vx: number; vy: number; moveSpeed: number; mass: number; boostUntil: number } | null = null;
-  /** Last input seq the server reported applying (SnapshotMsg.ackSeq). */
-  private selfAckSeq = 0;
-  /** Decaying offset that carries the rendered self position across reconciliation re-anchors. */
-  private renderOffset = { x: 0, y: 0 };
-  /** When true, the next reconciliation hard-snaps (initial spawn / respawn) instead of easing. */
-  private predictSnapPending = true;
+  // --- client-authoritative self fish ---
+  // The client owns its own fish: it simulates movement locally with a fixed-timestep
+  // accumulator (identical physics to the server, see stepFishMovement) and reports the
+  // resulting kinematics to the server, which trusts them. No prediction/reconciliation,
+  // so there is nothing to correct against — the own fish moves perfectly smoothly.
+  /** Local authoritative kinematics; null until seeded from the first you-block. */
+  private self: { x: number; y: number; vx: number; vy: number } | null = null;
+  /** State one fixed step in the past, for render interpolation across the leftover accumulator. */
+  private selfPrev: { x: number; y: number; vx: number; vy: number } | null = null;
+  /** Time (ms) accumulated toward the next fixed movement step. */
+  private selfAccumMs = 0;
+  /** Client-owned boost expiry, in estimated-server-time (Date.now + clientServerOffset). */
+  private selfBoostUntil = 0;
+  /** Rising-edge detector for the boost key. */
+  private prevBoostHeld = false;
+  /** Effective base move speed from the latest you-block (after passives, excluding boost). */
+  private youMoveSpeed = 0;
+  /** Heading unit vector reported to the server (derived from local velocity). */
+  private selfHx = 1;
+  private selfHy = 0;
+  /** One-shot forward lunge impulse (px/s) armed by detectBites on contact, consumed in stepSelf. */
+  private pendingLunge = 0;
+  /** performance.now() of the last own-fish bite, for the BITE.cooldownMs lunge throttle. */
+  private selfLastBiteAt = 0;
+  /** Interpolated render position of the self fish this frame (also used for optimistic eating). */
+  private selfRenderX = 0;
+  private selfRenderY = 0;
+  /** Send times of recent inputs (seq → performance.now), kept only for the F3 RTT gauge. */
+  private inputSentAt: Array<{ seq: number; sentAt: number }> = [];
   private lastFrameTime = performance.now();
   private inputInterval: number | null = null;
   private callbacks: ArenaCallbacks;
@@ -369,19 +390,23 @@ export class ArenaScene {
   private openIdentityEditor(): void {
     if (this.identityEditorMount) return;
     const currentName = (window as any).__playerName ?? "Fish";
-    const currentColor = (window as any).__playerColor ?? "#ffd97f";
+    const currentSpecies = (window as any).__playerSpecies ?? DEFAULT_SPECIES_ID;
     this.identityEditorMount = mountIdentityEditor({
-      current: { name: currentName, color: currentColor },
+      current: { name: currentName, species: currentSpecies },
       onSave: (next) => {
+        const color = colorForSpecies(next.species);
         (window as any).__playerName = next.name;
-        (window as any).__playerColor = next.color;
-        saveIdentity(next);
-        this.net.identity(next.name, next.color);
+        (window as any).__playerSpecies = next.species;
+        (window as any).__playerColor = color;
+        saveIdentity({ name: next.name, species: next.species, color });
+        this.net.identity(next.name, color, next.species);
         const me = this.selfId ? this.fishes.get(this.selfId) : undefined;
         if (me) {
           me.name = next.name;
-          me.color = next.color;
-          me.sprite.setIdentity(next.name, next.color);
+          me.color = color;
+          me.species = next.species;
+          me.sprite.setIdentity(next.name, color);
+          me.sprite.setSpecies(next.species);
         }
       },
       onClose: () => { this.identityEditorMount = null; },
@@ -446,76 +471,84 @@ export class ArenaScene {
   }
 
   private startInputLoop(): void {
-    // 20 Hz input send
+    // 20 Hz input send — reports the client-authoritative kinematics when we have a
+    // local sim, falling back to bare intent before the first you-block seeds it.
     this.inputInterval = window.setInterval(() => {
       const s = this.input.state;
-      const seq = this.net.input(s.vx, s.vy, s.boost);
-      this.recordInput(seq, s.vx, s.vy, s.boost);
+      const seq = this.self
+        ? this.net.input(s.vx, s.vy, s.boost, {
+            x: this.self.x, y: this.self.y,
+            pvx: this.self.vx, pvy: this.self.vy,
+            hx: this.selfHx, hy: this.selfHy,
+          })
+        : this.net.input(s.vx, s.vy, s.boost);
+      this.recordInput(seq);
     }, 50);
   }
 
-  /** Buffer a sent input for prediction replay, normalizing exactly as the server does (only when mag > 1). */
-  private recordInput(seq: number, vx: number, vy: number, boost: boolean): void {
-    const mag = Math.hypot(vx, vy);
-    if (mag > 1) { vx /= mag; vy /= mag; }
-    this.inputBuffer.push({ seq, vx, vy, boost, sentAt: performance.now() });
-    if (this.inputBuffer.length > 64) this.inputBuffer.shift();
+  /** Remember an input's send time so the F3 panel can measure input→ack RTT. */
+  private recordInput(seq: number): void {
+    this.inputSentAt.push({ seq, sentAt: performance.now() });
+    if (this.inputSentAt.length > 64) this.inputSentAt.shift();
+  }
+
+  /** Seed the local self sim from the you-block the first time we see it (or after respawn). */
+  private seedSelfIfNeeded(you: NonNullable<SnapshotMsg["you"]>): void {
+    this.youMoveSpeed = you.moveSpeed;
+    if (this.self !== null) return;
+    this.self = { x: you.x, y: you.y, vx: you.vx, vy: you.vy };
+    this.selfPrev = { ...this.self };
+    this.selfAccumMs = 0;
+    const hm = Math.hypot(you.hx, you.hy);
+    if (hm > 0.01) { this.selfHx = you.hx / hm; this.selfHy = you.hy / hm; }
   }
 
   /**
-   * Predict the self fish's current position by replaying inputs the server hasn't acked yet,
-   * starting from the last authoritative state. Each acked-pending input is replayed at the
-   * server tick cadence; the newest input gets a trailing partial step up to `now` for
-   * smooth sub-tick motion. Boost and the level-up freeze are evaluated authoritatively.
+   * Advance the client-authoritative self fish with a fixed-timestep accumulator: consume
+   * wall-clock time in TICK.ms chunks running the shared movement integrator. Rendering
+   * (in tick) interpolates between selfPrev and self by the leftover-accumulator fraction,
+   * which makes motion perfectly smooth and framerate-independent. Boost and the level-up
+   * freeze are owned locally — there is no server to reconcile against.
    */
-  private computePredicted(now: number): { x: number; y: number; vx: number; vy: number } {
-    const auth = this.selfAuth!;
-    const s = { x: auth.x, y: auth.y, vx: auth.vx, vy: auth.vy };
+  private stepSelf(dtMs: number): void {
+    if (!this.self) return;
+    const STEP = TICK.ms;
     const estServerNow = Date.now() + this.clientServerOffset;
-    const boostMult = estServerNow < auth.boostUntil ? FISH.boostMultiplier : 1;
-    // Mirror the server freeze: target is zero while the level-up modal is open and not dismissed.
+    // Boost: trigger locally on the rising edge if the server says we're off cooldown.
+    const held = this.input.state.boost;
+    if (held && !this.prevBoostHeld && estServerNow >= this.youBoostReadyAt && estServerNow >= this.selfBoostUntil) {
+      this.selfBoostUntil = estServerNow + boostDurationMs(this.youMass);
+    }
+    this.prevBoostHeld = held;
+    const boostMult = estServerNow < this.selfBoostUntil ? FISH.boostMultiplier : 1;
+    // Movement intent (normalized exactly as the server does), zeroed while the modal is open.
+    let ivx = this.input.state.vx;
+    let ivy = this.input.state.vy;
+    const mag = Math.hypot(ivx, ivy);
+    if (mag > 1) { ivx /= mag; ivy /= mag; }
     const frozen = !!this.levelUpMount && !this.levelUpMount.isDismissed();
-    const pending = this.inputBuffer.filter((i) => i.seq > this.selfAckSeq);
-    for (let i = 0; i < pending.length; i++) {
-      const inp = pending[i]!;
-      const tvx = frozen ? 0 : inp.vx;
-      const tvy = frozen ? 0 : inp.vy;
-      const dt = i === pending.length - 1
-        ? Math.max(0, Math.min(PREDICT_STEP_S, (now - inp.sentAt) / 1000))
-        : PREDICT_STEP_S;
-      stepFishMovement(s, tvx, tvy, auth.moveSpeed, boostMult, auth.mass, dt);
+    if (frozen) { ivx = 0; ivy = 0; }
+    // Consume a pending bite lunge (armed by detectBites on contact with edible prey): a one-shot
+    // forward velocity bump along the reported heading. It flows through the same shared physics
+    // the server trusts (reported via the input message), then decays via stepFishMovement's
+    // smoothing — a real catch-up dash, not just a visual.
+    if (this.pendingLunge > 0 && !frozen) {
+      this.self.vx += this.selfHx * this.pendingLunge;
+      this.self.vy += this.selfHy * this.pendingLunge;
+      this.pendingLunge = 0;
     }
-    return s;
-  }
-
-  /**
-   * Re-anchor prediction to the authoritative you-block and fold the resulting visual
-   * discontinuity into renderOffset (which decays to zero in tick) so the swap is invisible.
-   */
-  private reconcileSelf(msg: SnapshotMsg): void {
-    const you = msg.you!;
-    const now = performance.now();
-    const firstAnchor = this.selfAuth === null || this.predictSnapPending;
-    const oldPred = firstAnchor ? null : this.computePredicted(now);
-    this.selfAuth = {
-      x: you.x, y: you.y, vx: you.vx, vy: you.vy,
-      moveSpeed: you.moveSpeed, mass: you.mass, boostUntil: you.boostUntil,
-    };
-    this.selfAckSeq = msg.ackSeq;
-    this.inputBuffer = this.inputBuffer.filter((i) => i.seq > this.selfAckSeq);
-    if (firstAnchor) {
-      this.renderOffset.x = 0;
-      this.renderOffset.y = 0;
-      this.predictSnapPending = false;
-      return;
+    this.selfAccumMs += dtMs;
+    let steps = 0;
+    while (this.selfAccumMs >= STEP && steps < 8) {
+      this.selfPrev = { x: this.self.x, y: this.self.y, vx: this.self.vx, vy: this.self.vy };
+      stepFishMovement(this.self, ivx, ivy, this.youMoveSpeed, boostMult, this.youMass, STEP / 1000);
+      this.selfAccumMs -= STEP;
+      steps++;
     }
-    const newPred = this.computePredicted(now);
-    this.renderOffset.x += oldPred!.x - newPred.x;
-    this.renderOffset.y += oldPred!.y - newPred.y;
-    if (Math.hypot(this.renderOffset.x, this.renderOffset.y) > PREDICT_SNAP_PX) {
-      this.renderOffset.x = 0;
-      this.renderOffset.y = 0;
-    }
+    if (steps === 8) this.selfAccumMs = 0; // backgrounded tab: drop the backlog rather than fast-forward
+    // Heading reported to the server: follow the velocity direction once actually moving.
+    const sp = Math.hypot(this.self.vx, this.self.vy);
+    if (sp > 5) { this.selfHx = this.self.vx / sp; this.selfHy = this.self.vy / sp; }
   }
 
   private drawBackground(): void {
@@ -627,17 +660,17 @@ export class ArenaScene {
       this.lastServerTickMs = msg.serverTickMs;
       perf.setGauge("server tick", this.lastServerTickMs, "ms");
     }
-    // RTT = arrival − sentAt of the input the server just acked. Read inputBuffer here,
-    // BEFORE reconcileSelf (below) prunes it to seq > ackSeq and drops the acked input.
+    // RTT = arrival − sentAt of the input the server just acked.
     if (msg.you) {
       let acked: { seq: number; sentAt: number } | null = null;
-      for (const inp of this.inputBuffer) {
+      for (const inp of this.inputSentAt) {
         if (inp.seq <= msg.ackSeq && (acked === null || inp.seq > acked.seq)) acked = inp;
       }
       if (acked) {
         this.lastRttMs = recvTime - acked.sentAt;
         perf.setGauge("rtt", this.lastRttMs, "ms");
       }
+      this.inputSentAt = this.inputSentAt.filter((i) => i.seq > msg.ackSeq);
     }
 
     if (msg.you) {
@@ -686,11 +719,11 @@ export class ArenaScene {
         this.fishHeading.set(this.selfId, { hx: msg.you.hx, hy: msg.you.hy });
       }
 
-      // self fish — predicted locally, reconciled against the authoritative you-block
+      // self fish — client-authoritative: seed the local sim once, then it runs free.
       // (server sends welcome with selfId before snapshots)
       if (this.selfId) {
         this.ensureSelfSprite(msg);
-        this.reconcileSelf(msg);
+        this.seedSelfIfNeeded(msg.you);
       }
     }
 
@@ -809,12 +842,14 @@ export class ArenaScene {
     if (!f) {
       const name = (window as any).__playerName ?? "You";
       const color = (window as any).__playerColor ?? "#ffd97f";
-      const sprite = new FishSprite(name, color, false);
+      const species = (window as any).__playerSpecies ?? DEFAULT_SPECIES_ID;
+      const sprite = new FishSprite(name, color, false, species, true);
       this.fishLayer.addChild(sprite.container);
       f = {
         id: key,
         name,
         color,
+        species,
         isAi: false,
         // Self is predicted, never sampled from this buffer — seed it for type-correctness only.
         samples: [{ t: msg.serverNow, x: you.x, y: you.y }],
@@ -831,15 +866,17 @@ export class ArenaScene {
     if (ent.hx !== undefined && ent.hy !== undefined) {
       this.fishHeading.set(ent.id, { hx: ent.hx, hy: ent.hy });
     }
-    if (ent.id === this.selfId) return; // self is predicted (ensureSelfSprite + reconcileSelf), not interpolated
+    if (ent.id === this.selfId) return; // self is client-authoritative (local sim), not interpolated
     let f = this.fishes.get(ent.id);
     if (!f) {
-      const sprite = new FishSprite(ent.name ?? "?", ent.color ?? "#7fcfff", ent.isAi ?? false);
+      const species = ent.species ?? DEFAULT_SPECIES_ID;
+      const sprite = new FishSprite(ent.name ?? "?", ent.color ?? "#7fcfff", ent.isAi ?? false, species, false);
       this.fishLayer.addChild(sprite.container);
       f = {
         id: ent.id,
         name: ent.name ?? "?",
         color: ent.color ?? "#7fcfff",
+        species,
         isAi: ent.isAi ?? false,
         samples: [{ t: serverNow, x: ent.x, y: ent.y }],
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
@@ -859,6 +896,13 @@ export class ArenaScene {
     if (ent.name !== undefined && ent.name !== f.name) { f.name = ent.name; identityChanged = true; }
     if (ent.color !== undefined && ent.color !== f.color) { f.color = ent.color; identityChanged = true; }
     if (identityChanged) f.sprite.setIdentity(f.name, f.color);
+    // Species re-sent (first-seen from the server's snapshot view) when a player changes skin.
+    if (ent.species !== undefined && ent.species !== f.species) {
+      f.species = ent.species;
+      f.sprite.setSpecies(ent.species);
+    }
+    // Transient bite flag: the server set this on the tick this fish bit prey. Play its chomp.
+    if (ent.biting) f.sprite.triggerBite();
   }
 
   private applyPelletDelta(ent: EntityDelta): void {
@@ -949,23 +993,20 @@ export class ArenaScene {
         : new ProjectileSprite(weaponId, radius, spawnNow);
       this.projectileLayer.addChild(sprite.container);
       sprite.setTransform(ent.x, ent.y, ent.vx ?? 0, ent.vy ?? 0);
-      // Orbital: capture the offset from the owner's currently-rendered position so the ring
-      // tracks the owner each frame instead of lagging 150ms behind it.
-      let orbitOffX = 0, orbitOffY = 0;
-      if (mode === "orbital") {
-        const owner = this.ownerRenderedPos(ownerId);
-        if (owner) { orbitOffX = ent.x - owner.x; orbitOffY = ent.y - owner.y; }
-      }
+      // Orbital: seed the angle descriptor so the render loop animates the orbit from
+      // parameters (re-anchored each delta), anchored to the owner's rendered position.
+      const orbit = this.readOrbit(ent, ownerId);
       p = {
         id: ent.id,
         mode,
         lastT: serverNow, lastX: ent.x, lastY: ent.y,
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
         ownerId,
-        orbitOffX, orbitOffY,
+        orbitAngle: orbit.angle, orbitAngular: orbit.angular, orbitRadius: orbit.radius,
         radius,
         weaponId,
         spawnTime: spawnNow,
+        clientHitAt: new Map(),
         sprite,
       };
       this.projectiles.set(ent.id, p);
@@ -979,9 +1020,122 @@ export class ArenaScene {
     if (ent.vx !== undefined) p.vx = ent.vx;
     if (ent.vy !== undefined) p.vy = ent.vy;
     if (p.mode === "orbital") {
-      const owner = this.ownerRenderedPos(p.ownerId);
-      if (owner) { p.orbitOffX = ent.x - owner.x; p.orbitOffY = ent.y - owner.y; }
+      const orbit = this.readOrbit(ent, p.ownerId);
+      p.orbitAngle = orbit.angle;
+      p.orbitAngular = orbit.angular;
+      p.orbitRadius = orbit.radius;
     }
+  }
+
+  /**
+   * Read an orbital projectile's angle descriptor from a delta. The server ships orbitAngle/
+   * orbitAngular/orbitRadius each tick; if (defensively) absent, derive them from the entity
+   * position relative to the owner so the orbit still renders.
+   */
+  private readOrbit(ent: EntityDelta, ownerId: number): { angle: number; angular: number; radius: number } {
+    if (ent.orbitAngle !== undefined && ent.orbitRadius !== undefined) {
+      return { angle: ent.orbitAngle, angular: ent.orbitAngular ?? 0, radius: ent.orbitRadius };
+    }
+    const owner = this.ownerRenderedPos(ownerId);
+    if (owner) {
+      const dx = ent.x - owner.x;
+      const dy = ent.y - owner.y;
+      return { angle: Math.atan2(dy, dx), angular: 0, radius: Math.hypot(dx, dy) };
+    }
+    return { angle: 0, angular: 0, radius: 0 };
+  }
+
+  /**
+   * Optimistically hide pickups the self fish is swimming over so they vanish on contact
+   * instead of ~1 RTT later. The server (which now sims at our authoritative position, see
+   * applyClientState) commits the actual eat and confirms via `removed`, which destroys the
+   * entity. We test against the bare body radius — a subset of the server's passive-extended
+   * pickup radius — so anything we hide is guaranteed to be eaten and never flickers back.
+   */
+  private optimisticEat(): void {
+    const r = fishRadius(this.youMass);
+    const r2 = r * r;
+    const cx = this.selfRenderX;
+    const cy = this.selfRenderY;
+    for (const p of this.pellets.values()) {
+      if (!p.gfx.visible) continue;
+      const dx = cx - p.x, dy = cy - p.y;
+      if (dx * dx + dy * dy <= r2) p.gfx.visible = false;
+    }
+    for (const fr of this.fruits.values()) {
+      if (!fr.container.visible) continue;
+      const dx = cx - fr.x, dy = cy - fr.y;
+      if (dx * dx + dy * dy <= r2) fr.container.visible = false;
+    }
+    for (const c of this.chunks.values()) {
+      if (!c.gfx.visible) continue;
+      const dx = cx - c.gfx.x, dy = cy - c.gfx.y;
+      if (dx * dx + dy * dy <= r2) c.gfx.visible = false;
+    }
+  }
+
+  /**
+   * Honor-the-client weapon hits: when one of our own rendered projectiles overlaps an enemy
+   * fish on screen, report it so the hit lands on what we actually see — even though the server's
+   * geometry (enemies ~150ms behind, bullets dead-reckoned to present) may disagree. The server
+   * shares the projectile's re-hit gate between this and its own detection, so nothing
+   * double-applies; this local throttle just avoids message spam. Only linear bullets and orbital
+   * blades live in `this.projectiles` (trail/pulse are AoE handled server-side); zero-damage flyby
+   * saucers are rejected server-side.
+   */
+  private detectClientHits(now: number): void {
+    for (const p of this.projectiles.values()) {
+      if (p.ownerId !== this.selfId) continue;
+      const reHit = this.clientReHitMs(p.weaponId);
+      const px = p.sprite.container.x;
+      const py = p.sprite.container.y;
+      for (const f of this.fishes.values()) {
+        if (f.id === this.selfId) continue;
+        const dx = f.sprite.container.x - px;
+        const dy = f.sprite.container.y - py;
+        const reach = p.radius + fishRadius(f.mass);
+        if (dx * dx + dy * dy > reach * reach) continue;
+        const last = p.clientHitAt.get(f.id) ?? -Infinity;
+        if (now - last < reHit) continue;
+        p.clientHitAt.set(f.id, now);
+        this.net.weaponHit(p.id, f.id);
+      }
+    }
+  }
+
+  /**
+   * Own-fish bite: when our rendered fish contacts an EDIBLE enemy from any angle, play the
+   * mouth-open chomp animation and arm a one-shot forward lunge (consumed next stepSelf). The
+   * server resolves the actual eat — now omnidirectional contact-based — right after, so the
+   * lurch and the kill stay in sync. Cooldown-gated so sustained contact doesn't stack lunges.
+   * Mirrors optimisticEat / detectClientHits: self center is the predicted render position,
+   * enemies use their rendered sprite positions.
+   */
+  private detectBites(now: number): void {
+    if (now - this.selfLastBiteAt < BITE.cooldownMs) return;
+    const me = this.fishes.get(this.selfId);
+    if (!me) return;
+    const rSelf = fishRadius(this.youMass);
+    const cx = this.selfRenderX;
+    const cy = this.selfRenderY;
+    for (const f of this.fishes.values()) {
+      if (f.id === this.selfId) continue;
+      if (!canEat(this.youMass, f.mass)) continue; // only lurch at prey we can actually eat
+      const dx = f.sprite.container.x - cx;
+      const dy = f.sprite.container.y - cy;
+      const reach = rSelf + fishRadius(f.mass) + BITE.contactPad;
+      if (dx * dx + dy * dy > reach * reach) continue;
+      this.selfLastBiteAt = now;
+      this.pendingLunge = BITE.lungeImpulse;
+      me.sprite.triggerBite();
+      break;
+    }
+  }
+
+  /** Local re-hit throttle for a weapon (ms). Single-hit weapons (reHitMs 0) fire once per target. */
+  private clientReHitMs(weaponId: string): number {
+    const r = WEAPONS[weaponId as WeaponId]?.levels[0]?.reHitMs ?? 0;
+    return r > 0 ? r : 100_000;
   }
 
   /** Owner fish's current rendered (sprite container) position, or null if the owner isn't present. */
@@ -1039,22 +1193,28 @@ export class ArenaScene {
     const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
 
+    // Advance the client-authoritative self fish (fixed-timestep accumulator), then resolve
+    // its interpolated render position and optimistically hide anything it's swimming over.
+    this.stepSelf(dt * 1000);
+    if (this.mode === "play" && this.self) {
+      const alpha = this.selfPrev ? Math.min(1, this.selfAccumMs / TICK.ms) : 1;
+      this.selfRenderX = this.selfPrev ? this.selfPrev.x + (this.self.x - this.selfPrev.x) * alpha : this.self.x;
+      this.selfRenderY = this.selfPrev ? this.selfPrev.y + (this.self.y - this.selfPrev.y) * alpha : this.self.y;
+      this.optimisticEat();
+    }
+
     // Sample other entities at server-time minus the interp delay (Date.now domain, to match
     // the buffered sample timestamps). The smoothed offset keeps this from jittering frame-to-frame.
     const renderTime = Date.now() + this.interpOffset - INTERP_DELAY_MS;
     const fishSpan = perf.begin("fish-interp");
     for (const f of this.fishes.values()) {
-      // Self fish: client-side prediction, not the 100 ms interpolation buffer — so your
-      // own movement tracks input with no perceived lag. renderOffset eases reconciliation.
-      if (this.mode === "play" && f.id === this.selfId && this.selfAuth) {
-        const p = this.computePredicted(now);
-        const decay = Math.pow(0.001, dt);
-        this.renderOffset.x *= decay;
-        this.renderOffset.y *= decay;
-        if (Math.abs(this.renderOffset.x) < 0.05) this.renderOffset.x = 0;
-        if (Math.abs(this.renderOffset.y) < 0.05) this.renderOffset.y = 0;
-        const serverHeading = this.fishHeading.get(f.id);
-        f.sprite.setTransform(p.x + this.renderOffset.x, p.y + this.renderOffset.y, p.vx, p.vy, serverHeading, dt);
+      // Self fish: rendered straight from the local authoritative sim, interpolated between
+      // the previous and current fixed step — no interpolation buffer, no reconciliation, so
+      // your own movement tracks input with zero lag and zero velocity wobble.
+      if (this.mode === "play" && f.id === this.selfId && this.self) {
+        // Position resolved above (selfRenderX/Y); heading derives from local velocity
+        // (pass undefined so the sprite slerps it).
+        f.sprite.setTransform(this.selfRenderX, this.selfRenderY, this.self.vx, this.self.vy, undefined, dt);
         f.sprite.update(f.mass, dt);
         continue;
       }
@@ -1085,13 +1245,28 @@ export class ArenaScene {
         const pos = deadReckon(p.lastX, p.lastY, p.vx, p.vy, presentServerTime - p.lastT, PROJ_MAX_EXTRAP_MS);
         p.sprite.setTransform(pos.x, pos.y, p.vx, p.vy);
       } else {
-        // orbital: anchor to the owner's current rendered position + captured orbit offset.
+        // orbital: advance the angle continuously from the descriptor (re-anchored each
+        // snapshot, extrapolated at the angular velocity between) and place it on the owner's
+        // current rendered ring — smooth 60fps instead of stepping at the 20Hz snapshot rate.
         const owner = this.ownerRenderedPos(p.ownerId);
-        if (owner) p.sprite.setTransform(owner.x + p.orbitOffX, owner.y + p.orbitOffY, p.vx, p.vy);
+        if (owner) {
+          const ahead = Math.max(0, presentServerTime - p.lastT) / 1000;
+          const a = p.orbitAngle + p.orbitAngular * ahead;
+          const x = owner.x + Math.cos(a) * p.orbitRadius;
+          const y = owner.y + Math.sin(a) * p.orbitRadius;
+          // Face the direction of travel (tangent) so the blade banks through its orbit.
+          const tx = -Math.sin(a) * p.orbitAngular;
+          const ty = Math.cos(a) * p.orbitAngular;
+          p.sprite.setTransform(x, y, tx, ty);
+        }
         // owner missing (off-screen / dead): leave the sprite put; server removal cleans it up.
       }
     }
     for (const blob of this.inkBlobs.values()) blob.update(now);
+    if (this.mode === "play" && this.selfId) {
+      this.detectClientHits(now);
+      this.detectBites(now);
+    }
     projSpan.end();
 
     // Lightning bolts (radial-pulse / eel): short-lived, re-anchored each frame to the
@@ -1211,7 +1386,7 @@ export class ArenaScene {
       }
       perf.setGauge("pellets/view", inView, "#");
     }
-    perf.setGauge("pending in", this.inputBuffer.length, "#");
+    perf.setGauge("pending in", this.inputSentAt.length, "#");
     {
       const cutoff = now - 1000;
       while (this.rxBytesWindow.length > 0 && this.rxBytesWindow[0]!.t < cutoff) this.rxBytesWindow.shift();
@@ -1351,13 +1526,13 @@ export class ArenaScene {
       if (me) { me.sprite.destroy(); this.fishes.delete(this.selfId); }
     }
     this.selfId = 0;
-    // Reset prediction so stale unacked inputs can't fling the next life's fish.
-    this.selfAuth = null;
-    this.inputBuffer = [];
-    this.selfAckSeq = 0;
-    this.renderOffset.x = 0;
-    this.renderOffset.y = 0;
-    this.predictSnapPending = true;
+    // Reset the local sim so the next life re-seeds from its first you-block.
+    this.self = null;
+    this.selfPrev = null;
+    this.selfAccumMs = 0;
+    this.selfBoostUntil = 0;
+    this.prevBoostHeld = false;
+    this.inputSentAt = [];
     this.spectatorAnchor = null;
     // Seed camera at the last known self position so the transition isn't jarring.
     if (this.prevSelfX || this.prevSelfY) {

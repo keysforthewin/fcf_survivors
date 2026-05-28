@@ -138,6 +138,41 @@ export const MOUTH = {
   // Extra grab/suction distance beyond the body before a fish can vacuum prey in.
   // Scaled by the Close Encounters passive (getEatRangeMult).
   reachBonus: 80,
+  // Any-contact eating: a fish eats edible prey the moment their hitboxes overlap from
+  // ANY angle (dist <= rA + rB + contactMargin). The front cone + suction below only
+  // governs the *bonus reach* that vacuums prey in from in front — the eat itself is
+  // omnidirectional. A few px of margin makes "just touching" feel responsive.
+  contactMargin: 6,
+} as const;
+
+/**
+ * Bite lurch: when a fish's hitbox contacts edible prey it lunges forward and chomps.
+ * The lunge is a real one-shot velocity impulse (applied client-side in stepSelf for the
+ * player's own fish, server-side for AI eaters) so it flows through the same movement
+ * physics the server trusts. The animation (mouth-open "gulp" deform + chomp particles)
+ * is cosmetic on top.
+ */
+export const SPAWN = {
+  /**
+   * Newly spawned / respawned players cannot be eaten for this long. With any-contact
+   * eating (see MOUTH.contactMargin), a fresh mass-10 fish that spawns next to a bigger
+   * one would otherwise be chomped instantly. The window gives players time to orient and
+   * swim clear. AI fish are not protected.
+   */
+  protectMs: 3000,
+} as const;
+
+export const BITE = {
+  /** One-shot forward velocity bump (px/s) added along heading on a bite. Decays via ACCEL. */
+  lungeImpulse: 240,
+  /** Min time between lunges per attacker so sustained contact doesn't stack into a rocket. */
+  cooldownMs: 320,
+  /** Extra px added to rA+rB for the client-side own-fish bite detector. */
+  contactPad: 6,
+  /** Mouth-open "gulp" deformation (fraction) applied to the sprite over the envelope. */
+  gulp: 0.3,
+  /** Bite animation envelope (ms). */
+  animMs: 240,
 } as const;
 
 export function fishRadius(mass: number): number {

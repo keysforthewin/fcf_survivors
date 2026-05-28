@@ -6,8 +6,8 @@ export class TitlePage {
   get overlay(): Locator { return this.page.locator(".title-overlay"); }
   get nameInput(): Locator { return this.page.locator("#name-input"); }
   get diveInButton(): Locator { return this.page.locator(".title-card .play"); }
-  swatch(color: string): Locator {
-    return this.page.locator(`.color-swatch[data-color="${color}"]`);
+  speciesTile(id: string): Locator {
+    return this.page.locator(`.species-tile[data-species="${id}"]`);
   }
-  get selectedSwatch(): Locator { return this.page.locator(".color-swatch.selected"); }
+  get selectedTile(): Locator { return this.page.locator(".species-tile.selected"); }
 }

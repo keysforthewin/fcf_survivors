@@ -1,12 +1,42 @@
 :root {
   color-scheme: dark;
+
+  /* Deep-ocean palette — locked. One warm accent (gold) + cyan secondary, plus the
+     kind-colors used across weapons/passives/evolutions. Every surface derives from these. */
+  --abyss: #04101b;
   --bg-1: #06121c;
   --bg-2: #0a2236;
-  --accent: #ffd97f;
-  --accent-2: #7fcfff;
+
+  --surface: rgba(13, 31, 47, 0.64);        /* glass panel fill */
+  --surface-2: rgba(19, 41, 60, 0.5);
+  --surface-solid: rgba(9, 23, 36, 0.94);
+  --stroke: rgba(128, 200, 255, 0.14);       /* hairline on glass */
+  --stroke-strong: rgba(128, 200, 255, 0.30);
+
+  --accent: #ffce6b;          /* gold — primary CTA / highlights / upgrade cards */
+  --accent-ink: #1a1306;      /* text on the gold accent */
+  --accent-2: #62cdff;        /* cyan — secondary / weapon cards */
+  --mint: #74f0c0;            /* passives */
+  --rose: #ff86b0;            /* evolution */
+  --danger: #ff6a78;
+
   --text: #eaf6ff;
-  --muted: #7fa3bd;
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  --text-dim: #aac4d8;
+  --muted: #6f93ad;
+
+  --radius: 16px;             /* one corner-radius scale */
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  --shadow: 0 26px 70px rgba(1, 7, 14, 0.62);
+  --shadow-sm: 0 10px 26px rgba(1, 7, 14, 0.45);
+  --glass: blur(16px) saturate(1.18);
+  --inset-hi: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+
+  --font-ui: "Outfit", system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", "Outfit", system-ui, sans-serif;
+
+  font-family: var(--font-ui);
 }
 
 * { box-sizing: border-box; }
@@ -16,9 +46,12 @@ html, body {
   padding: 0;
   height: 100%;
   overflow: hidden;
-  background: radial-gradient(ellipse at top, var(--bg-2) 0%, var(--bg-1) 80%);
+  background:
+    radial-gradient(120% 90% at 50% -10%, #0f2d46 0%, var(--bg-1) 55%, var(--abyss) 100%);
   color: var(--text);
   user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #game-root {
@@ -32,8 +65,45 @@ canvas {
   height: 100%;
 }
 
+/* Fixed grain + vignette over everything (pointer-events:none so it never blocks input).
+   Cheap depth that makes the flat canvas feel cinematic. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background: radial-gradient(130% 100% at 50% 50%, transparent 58%, rgba(2, 8, 16, 0.5) 100%);
+}
+
 /* === Title screen === */
-.title-overlay,
+.title-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  overflow: hidden;
+  background: var(--abyss);
+  animation: overlay-fade 0.45s ease both;
+}
+
+/* Cinematic underwater hero behind the menu card; slow drift gives it life. */
+.title-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 38%;
+}
+.title-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(82% 72% at 50% 44%, rgba(4,16,27,0.15) 0%, rgba(4,16,27,0.74) 68%, rgba(4,16,27,0.94) 100%),
+    linear-gradient(180deg, rgba(4,16,27,0.55) 0%, transparent 26%);
+}
+
 .death-overlay {
   position: fixed;
   inset: 0;
@@ -42,6 +112,16 @@ canvas {
   background: radial-gradient(ellipse at top, rgba(10,34,54,0.85) 0%, rgba(6,18,28,0.95) 80%);
   backdrop-filter: blur(6px);
   z-index: 10;
+  animation: overlay-fade 0.3s ease both;
+}
+
+@keyframes overlay-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .title-bg { animation: title-bg-drift 36s ease-in-out infinite alternate; }
+}
+@keyframes title-bg-drift {
+  from { transform: scale(1.06); }
+  to   { transform: scale(1.13) translateY(-1.5%); }
 }
 
 /* Translucent variant keeps the arena visible behind the death card. */
@@ -104,13 +184,46 @@ canvas {
 
 .title-card,
 .death-card {
-  width: min(420px, 90vw);
-  padding: 2.4rem 2rem;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 18px;
-  box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+  width: min(480px, 92vw);
+  padding: 2rem 1.9rem 1.8rem;
+  background:
+    linear-gradient(180deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), var(--inset-hi);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
   position: relative;
+  animation: card-rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes card-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Title brand block */
+.title-brand { text-align: center; margin-bottom: 1.4rem; }
+.title-logo {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2rem, 5.4vw, 2.9rem);
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #ffffff 0%, #cfeaff 48%, var(--accent-2) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 18px rgba(98, 205, 255, 0.28));
+}
+.title-logo span {
+  display: block;
+  background: linear-gradient(180deg, var(--accent) 0%, #ff9d4d 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 16px rgba(255, 160, 70, 0.3));
 }
 
 /* Death card is roughly twice as wide so stats + arsenal sit side-by-side and the
@@ -125,16 +238,12 @@ canvas {
   right: 14px;
 }
 
-.title-card h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.6rem;
-  letter-spacing: 0.04em;
-}
-
 .title-card .subtitle {
-  margin: 0 0 1.5rem;
-  color: var(--muted);
-  font-size: 0.9rem;
+  margin: 0.7rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.86rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .field {
@@ -143,65 +252,122 @@ canvas {
 
 .field label {
   display: block;
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 0.4rem;
+  letter-spacing: 0.16em;
+  margin-bottom: 0.45rem;
 }
 
 .field input[type=text] {
   width: 100%;
   padding: 0.7rem 0.9rem;
   font: inherit;
-  background: rgba(0,0,0,0.3);
+  background: rgba(2, 10, 18, 0.55);
   color: var(--text);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
   outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.16s ease;
 }
 
 .field input[type=text]:focus {
   border-color: var(--accent-2);
-  box-shadow: 0 0 0 3px rgba(127,207,255,0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 22%, transparent);
 }
 
-.color-row {
+/* === Species picker (replaces the old color swatches) === */
+.species-picker {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  gap: 0.6rem;
+}
+.species-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.5rem 0.9rem;
+  min-height: 78px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--stroke);
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--pick-accent, var(--accent-2)) 18%, transparent), transparent 64%),
+    var(--surface-2);
+}
+.species-preview-img {
+  width: 118px;
+  height: 66px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 12px rgba(0,0,0,0.55));
+}
+.species-preview-name {
+  font-family: var(--font-display);
+  font-size: 1.18rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.species-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 6px;
 }
-
-.color-swatch {
+.species-tile {
   aspect-ratio: 1;
-  border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.15);
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
   cursor: pointer;
-  transition: transform 0.08s ease;
+  transition: transform 0.1s ease, border-color 0.12s ease, background 0.12s ease, box-shadow 0.18s ease;
 }
-
-.color-swatch:hover { transform: scale(1.1); }
-.color-swatch.selected {
-  border-color: white;
-  box-shadow: 0 0 0 3px rgba(255,255,255,0.2);
+.species-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  opacity: 0.78;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
+  transition: opacity 0.12s ease;
 }
+.species-tile:hover {
+  transform: translateY(-2px);
+  border-color: var(--stroke-strong);
+}
+.species-tile:hover img { opacity: 1; }
+.species-tile.selected {
+  border-color: var(--tile-accent, var(--accent));
+  background: color-mix(in srgb, var(--tile-accent, var(--accent)) 16%, var(--surface-2));
+  box-shadow: 0 0 0 1px var(--tile-accent, var(--accent)),
+    0 6px 16px color-mix(in srgb, var(--tile-accent, var(--accent)) 32%, transparent);
+}
+.species-tile.selected img { opacity: 1; }
 
 button.play {
   width: 100%;
-  margin-top: 1.5rem;
-  padding: 0.9rem;
-  font: 600 1rem inherit;
-  letter-spacing: 0.04em;
-  background: var(--accent);
-  color: #1a1207;
+  margin-top: 1.4rem;
+  padding: 0.95rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: linear-gradient(180deg, #ffe08a 0%, var(--accent) 56%, #ffac52 100%);
   border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: transform 0.08s ease, filter 0.1s ease;
+  box-shadow: 0 12px 28px rgba(255, 168, 70, 0.34), var(--inset-hi);
+  transition: transform 0.08s ease, filter 0.12s ease, box-shadow 0.18s ease;
 }
 
-button.play:hover { transform: translateY(-1px); filter: brightness(1.05); }
-button.play:active { transform: translateY(0); }
+button.play:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.04);
+  box-shadow: 0 18px 38px rgba(255, 168, 70, 0.44), var(--inset-hi);
+}
+button.play:active { transform: translateY(0) scale(0.99); }
 
 .help {
   margin-top: 1rem;
@@ -225,11 +391,13 @@ button.play:active { transform: translateY(0); }
 }
 
 .hud-left, .hud-right {
-  background: rgba(0,0,0,0.35);
-  padding: 8px 12px;
-  border-radius: 10px;
-  backdrop-filter: blur(4px);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: var(--surface);
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow-sm), var(--inset-hi);
 }
 
 .hud-right {
@@ -269,47 +437,68 @@ button.play:active { transform: translateY(0); }
 
 .hud-stat .label {
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.6rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.15em;
 }
 
 .hud-stat .value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  line-height: 1.05;
   font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 
 .xp-bar {
   position: fixed;
-  bottom: 16px;
+  bottom: 14px;
   left: 16px;
   right: 16px;
-  height: 8px;
-  background: rgba(0,0,0,0.4);
-  border-radius: 4px;
+  height: 7px;
+  background: rgba(2, 10, 18, 0.6);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-pill);
   overflow: hidden;
   z-index: 5;
+  box-shadow: var(--inset-hi);
 }
 
 .xp-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #ffd97f, #ff85a1);
+  background: linear-gradient(90deg, var(--accent-2), var(--mint) 55%, var(--accent));
   width: 0%;
-  transition: width 0.15s ease;
+  border-radius: inherit;
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-2) 50%, transparent);
 }
 
 .boost-indicator {
   position: fixed;
-  bottom: 36px;
+  bottom: 32px;
   left: 16px;
-  background: rgba(0,0,0,0.35);
-  padding: 4px 10px;
-  border-radius: 8px;
-  font-size: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   color: var(--muted);
   z-index: 5;
+  transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
 }
 
-.boost-indicator.ready { color: var(--accent); }
+.boost-indicator.ready {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 26%, transparent);
+}
 
 /* === Weapon HUD === */
 .hud-skills {
@@ -330,22 +519,24 @@ button.play:active { transform: translateY(0); }
 }
 
 .skill-pip {
-  width: 52px;
-  height: 52px;
-  background: rgba(0,0,0,0.45);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 12px;
+  width: 54px;
+  height: 54px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-sm), var(--inset-hi);
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.08s ease, border-color 0.1s ease;
 }
 
-.skill-pip:hover { border-color: rgba(255,255,255,0.3); transform: translateY(-1px); }
+.skill-pip:hover { border-color: var(--stroke-strong); transform: translateY(-2px); }
 .skill-pip.empty { opacity: 0.3; border-style: dashed; cursor: default; }
 .skill-pip.empty:hover { transform: none; }
 .skill-pip.empty.actionable {
@@ -587,9 +778,11 @@ button.play:active { transform: translateY(0); }
 }
 
 .levelup-banner-title {
-  font-size: 1.6rem;
-  letter-spacing: 0.04em;
-  margin-top: 0.4rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.9rem;
+  letter-spacing: 0.01em;
+  margin-top: 0.3rem;
 }
 
 .levelup-banner-queued {
@@ -614,10 +807,13 @@ button.play:active { transform: translateY(0); }
 }
 
 .levelup-card {
-  background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01));
-  border: 1px solid rgba(255,255,255,0.1);
+  background: linear-gradient(170deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--stroke);
   border-top: 3px solid var(--card-accent, var(--accent-2));
-  border-radius: 14px;
+  border-radius: var(--radius);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-sm);
   padding: 1.4rem 1.2rem 1.2rem;
   color: var(--text);
   font: inherit;
@@ -657,8 +853,10 @@ button.play:active { transform: translateY(0); }
 }
 
 .levelup-card-title {
-  font-size: 1.05rem;
-  letter-spacing: 0.03em;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
   margin-bottom: 0.5rem;
   color: var(--text);
 }
@@ -767,8 +965,11 @@ button.play:active { transform: translateY(0); }
 
 /* === Death screen === */
 .death-card h1 {
-  margin: 0 0 1rem;
-  font-size: 1.6rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin: 0 0 0.9rem;
+  font-size: 1.75rem;
+  letter-spacing: 0.01em;
 }
 
 /* Stats grid and arsenal/build summary share one row on the wide death card. */
@@ -803,8 +1004,11 @@ button.play:active { transform: translateY(0); }
 }
 
 .death-stat .value {
-  font-size: 1.2rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.3rem;
   font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 
 .leaderboard {
@@ -1132,10 +1336,12 @@ button.play:active { transform: translateY(0); }
   top: 64px;
   right: 16px;
   width: 200px;
-  background: rgba(0,0,0,0.45);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 10px;
-  backdrop-filter: blur(6px);
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-sm), var(--inset-hi);
   z-index: 5;
   font-size: 0.8rem;
   pointer-events: none;
@@ -1272,7 +1478,7 @@ button.play:active { transform: translateY(0); }
   pointer-events: none;
   overflow: hidden;
   z-index: 25;
-  font-family: Inter, system-ui, sans-serif;
+  font-family: var(--font-display);
 }
 
 .damage-number {
@@ -1306,4 +1512,14 @@ button.play:active { transform: translateY(0); }
     0 0 6px rgba(255, 80, 70, 0.5),
     0 0 3px rgba(0, 0, 0, 0.9),
     0 1px 0 rgba(0, 0, 0, 0.8);
+}
+
+/* === Reduced motion: collapse ambient loops + long transitions (a11y, mandatory) === */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

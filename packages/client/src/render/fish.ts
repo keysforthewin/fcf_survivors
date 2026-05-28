@@ -1,20 +1,32 @@
-import { Container, Graphics, Text, TextStyle } from "pixi.js";
-import { fishRadius } from "@fcf/shared";
+import { Container, Graphics, Sprite, Text, TextStyle } from "pixi.js";
+import { BITE, fishRadius } from "@fcf/shared";
+import { getFishTexture, hasFishTexture } from "./species-textures.ts";
 
+/** Heading cosine past which we commit to a facing direction. A deadband around vertical
+ *  (|cos| <= this) holds the last flip so a fish swimming straight up/down doesn't strobe. */
+const FLIP_DEADBAND = 0.08;
+
+/**
+ * A fish rendered as a photo-real sprite (public/fish/<id>.png, authored facing +x). The
+ * sprite lives inside `bodyGroup`, which carries the velocity squash-stretch, the bite "gulp"
+ * and the facing flip; `glow` (big fish) and the optional own-fish `ownRing` sit behind it, and
+ * the name `label` rides on the outer container so it never inherits the flip/squash.
+ */
 export class FishSprite {
   container = new Container();
   private bodyGroup = new Container();
-  private body = new Graphics();
-  private tail = new Graphics();
-  private dorsal = new Graphics();
-  private eye = new Graphics();
+  private sprite: Sprite;
   private glow = new Graphics();
+  /** Soft ring under the local player's own fish so they can find themselves (species != color now). */
+  private ownRing: Graphics | null = null;
   private label: Text;
   private color: number;
   private isAi: boolean;
+  private isSelf: boolean;
+  private species: string;
   private currentRadius = 0;
   private currentMass = 0;
-  /** Sprite radius the geometry was last drawn at — lerps toward the mass-derived target so mass changes are visibly animated. */
+  /** Sprite radius the geometry was last decorated at — lerps toward the mass-derived target. */
   private renderRadius = 0;
   private swimPhase = Math.random() * Math.PI * 2;
   private headingX = 1;
@@ -23,21 +35,33 @@ export class FishSprite {
   private speed = 0;
   private stretchX = 1;
   private stretchY = 1;
+  /** +1 facing right, -1 facing left (vertical mirror keeps the side profile belly-down). */
+  private flipSign = 1;
+  /** Bite chomp animation: active while biteAge < BITE.animMs, advanced by dt in update(). */
+  private biteActive = false;
+  private biteAge = 0;
+  /** Whether the sprite is currently showing the tintable fallback silhouette (vs the real photo). */
+  private usingFallback = true;
 
-  constructor(name: string, color: string, isAi: boolean) {
+  constructor(name: string, color: string, isAi: boolean, species: string, isSelf = false) {
     this.color = parseColor(color);
     this.isAi = isAi;
-    // Layer order (back → front): glow, [bodyGroup: tail, body, dorsal, eye], label.
-    // bodyGroup is the squash-stretch carrier — glow/label stay un-distorted.
+    this.isSelf = isSelf;
+    this.species = species;
+    this.sprite = new Sprite(getFishTexture(species));
+    this.sprite.anchor.set(0.5);
+    this.bodyGroup.addChild(this.sprite);
+    // Layer order (back → front): ownRing (self only), glow, [bodyGroup: sprite], label.
+    if (isSelf) {
+      this.ownRing = new Graphics();
+      this.container.addChild(this.ownRing);
+    }
     this.container.addChild(this.glow);
     this.container.addChild(this.bodyGroup);
-    this.bodyGroup.addChild(this.tail);
-    this.bodyGroup.addChild(this.body);
-    this.bodyGroup.addChild(this.dorsal);
-    this.bodyGroup.addChild(this.eye);
     const style = new TextStyle({
-      fontFamily: "Inter, system-ui, sans-serif",
+      fontFamily: "Outfit, Inter, system-ui, sans-serif",
       fontSize: 14,
+      fontWeight: "600",
       fill: 0xffffff,
       stroke: { color: 0x000000, width: 3, alpha: 0.6 },
       align: "center",
@@ -46,13 +70,15 @@ export class FishSprite {
     this.label.anchor.set(0.5);
     this.container.addChild(this.label);
     this.renderRadius = fishRadius(10);
-    this.draw(this.renderRadius);
+    this.refreshTexture();
+    this.applySpriteScale();
+    this.decorate(this.renderRadius);
   }
 
   /**
-   * Update position and orientation. When `serverHeading` is provided, the sprite
-   * slerps toward it (authoritative source). Otherwise the heading is derived from
-   * velocity direction. Server heading is always preferred when available.
+   * Update position and orientation. When `serverHeading` is provided, the sprite slerps toward
+   * it (authoritative source); otherwise heading is derived from velocity direction. Also resolves
+   * the facing flip (with a deadband near vertical so it doesn't strobe).
    */
   setTransform(
     x: number, y: number, vx: number, vy: number,
@@ -63,21 +89,16 @@ export class FishSprite {
     this.container.y = y;
     const speed = Math.hypot(vx, vy);
     this.speed = speed;
-    // Target heading: server-sent (authoritative) if present, else velocity-derived.
     let tx = this.headingX;
     let ty = this.headingY;
     if (serverHeading) {
       const m = Math.hypot(serverHeading.hx, serverHeading.hy);
-      if (m > 0.01) {
-        tx = serverHeading.hx / m;
-        ty = serverHeading.hy / m;
-      }
+      if (m > 0.01) { tx = serverHeading.hx / m; ty = serverHeading.hy / m; }
     } else if (speed > 5) {
       tx = vx / speed;
       ty = vy / speed;
     }
-    // Slerp current heading toward target — masks 50ms server snapshot cadence.
-    // 14 rad/sec catch-up is fast enough to feel responsive without snapping.
+    // Slerp current heading toward target (14 rad/sec) to mask the 50ms snapshot cadence.
     const cur = Math.atan2(this.headingY, this.headingX);
     const tgt = Math.atan2(ty, tx);
     let delta = tgt - cur;
@@ -89,101 +110,107 @@ export class FishSprite {
     this.headingX = Math.cos(next);
     this.headingY = Math.sin(next);
     this.container.rotation = next;
+    // Facing flip: a side-profile sprite rotated past vertical goes belly-up. Mirror it
+    // vertically when facing left so the belly stays down. Deadband holds the flip near
+    // vertical headings (cos ≈ 0) to avoid strobing.
+    const c = this.headingX;
+    if (c > FLIP_DEADBAND) this.flipSign = 1;
+    else if (c < -FLIP_DEADBAND) this.flipSign = -1;
+    // else: keep current flipSign (hysteresis zone)
   }
 
   update(mass: number, dt: number): void {
-    // Target render radius from current mass; lerp toward it so mass changes are
-    // visibly animated (a big hit shrinks the fish over ~0.3s rather than popping).
+    // Lerp the rendered radius toward the mass-derived target so mass changes animate.
     const targetR = fishRadius(mass);
     const ease = 1 - Math.pow(0.001, dt);
     this.renderRadius += (targetR - this.renderRadius) * ease;
+    // Swap in the real photo texture once it has loaded (covers fish created during preload).
+    this.refreshTexture();
+    this.applySpriteScale();
+
     const wantsGlow = mass > 50 && !this.isAi;
     if (
-      Math.abs(this.renderRadius - this.currentRadius) > 0.4 ||
+      Math.abs(this.renderRadius - this.currentRadius) > 0.5 ||
       Math.abs(mass - this.currentMass) > 5 ||
       wantsGlow !== this.hasGlow
     ) {
       this.currentMass = mass;
       this.hasGlow = wantsGlow;
-      this.draw(this.renderRadius);
+      this.decorate(this.renderRadius);
     }
-    // tail wiggle (slightly faster when bigger to read as "swimming hard")
+
+    // Faked swim: a subtle sinusoidal shear (the tail is part of the photo now). Amplitude
+    // shrinks for bigger fish so whales don't shimmy.
     this.swimPhase += dt * (8 + Math.min(4, mass / 50));
-    const wiggle = Math.sin(this.swimPhase) * 0.28;
-    this.tail.rotation = wiggle;
-    this.dorsal.rotation = -wiggle * 0.4;
+    const swimAmp = 0.04 * Math.max(0.4, Math.min(1, 40 / Math.max(1, this.renderRadius)));
+    this.bodyGroup.skew.x = Math.sin(this.swimPhase) * swimAmp;
+
     // Velocity-driven squash-stretch.
     const target = Math.max(0, Math.min(0.22, this.speed / 900));
     this.stretchX += (1 + target - this.stretchX) * ease;
     this.stretchY += (1 - target * 0.5 - this.stretchY) * ease;
-    this.bodyGroup.scale.set(this.stretchX, this.stretchY);
+    // Bite chomp: a brief "gulp" (stretch forward, squash vertically) over BITE.animMs.
+    let gulp = 0;
+    if (this.biteActive) {
+      this.biteAge += dt;
+      const t = this.biteAge / (BITE.animMs / 1000);
+      if (t >= 1) this.biteActive = false;
+      else gulp = Math.sin(Math.PI * t) * BITE.gulp;
+    }
+    // Compose squash-stretch + gulp + facing-flip into the single bodyGroup scale.
+    this.bodyGroup.scale.set(
+      this.stretchX * (1 + gulp),
+      this.stretchY * (1 - gulp * 0.5) * this.flipSign,
+    );
+
+    // Own-fish ring: slow pulse so the player can always pick themselves out.
+    if (this.ownRing) {
+      this.ownRing.alpha = 0.5 + 0.18 * Math.sin(this.swimPhase * 0.5);
+    }
+
+    this.label.position.set(0, -this.renderRadius - 14);
+    this.label.rotation = -this.container.rotation;
+    this.label.alpha = this.isAi ? 0.65 : 1;
   }
 
-  private draw(radius: number): void {
+  /** Scale the sprite so its width spans the hitbox diameter (2·radius); aspect preserved. */
+  private applySpriteScale(): void {
+    const texW = this.sprite.texture.width || 1;
+    const s = (2 * this.renderRadius) / texW;
+    this.sprite.scale.set(s);
+  }
+
+  /** Point the sprite at the real photo texture once available; tint white (photo) vs accent (fallback). */
+  private refreshTexture(): void {
+    const ready = hasFishTexture(this.species);
+    const tex = getFishTexture(this.species);
+    if (this.sprite.texture !== tex) this.sprite.texture = tex;
+    if (ready === this.usingFallback) {
+      this.usingFallback = !ready;
+    }
+    this.sprite.tint = ready ? 0xffffff : this.color;
+  }
+
+  /** Redraw the (cheap, change-gated) decorations: big-fish glow and the own-fish ring. */
+  private decorate(radius: number): void {
     this.currentRadius = radius;
-
-    const c = this.color;
-    const darker = darken(c, 0.55);
-    const lighter = lighten(c, 0.32);
-    const spineColor = darken(c, 0.4);
-
-    this.body.clear();
-    this.body
-      .ellipse(0, 0, radius + 1, radius * 0.78 + 1)
-      .fill({ color: 0x000000, alpha: 0.25 });
-    this.body
-      .ellipse(0, 0, radius, radius * 0.78)
-      .fill(c)
-      .stroke({ color: darker, width: 2, alpha: 0.95 });
-    this.body
-      .moveTo(-radius * 0.7, -radius * 0.1)
-      .lineTo(radius * 0.7, -radius * 0.1)
-      .stroke({ color: spineColor, width: Math.max(1, radius * 0.06), alpha: 0.35 });
-    this.body
-      .ellipse(0, radius * 0.22, radius * 0.72, radius * 0.42)
-      .fill({ color: lighter, alpha: 0.4 });
-
-    this.tail.clear();
-    const tailBase = -radius * 0.85;
-    this.tail.position.set(tailBase, 0);
-    this.tail
-      .moveTo(0, 0)
-      .lineTo(-radius * 0.6, -radius * 0.6)
-      .lineTo(-radius * 0.42, 0)
-      .lineTo(-radius * 0.6, radius * 0.6)
-      .closePath()
-      .fill(c)
-      .stroke({ color: darker, width: 2, alpha: 0.95 });
-
-    this.dorsal.clear();
-    this.dorsal.position.set(-radius * 0.05, -radius * 0.6);
-    this.dorsal
-      .moveTo(0, 0)
-      .lineTo(radius * 0.5, 0)
-      .lineTo(radius * 0.2, -radius * 0.45)
-      .closePath()
-      .fill({ color: darker, alpha: 0.92 })
-      .stroke({ color: darken(c, 0.3), width: 1.2, alpha: 0.85 });
-
-    this.eye.clear();
-    const eyeR = Math.max(2, radius * 0.14);
-    this.eye
-      .circle(radius * 0.5, -radius * 0.18, eyeR)
-      .fill(0xffffff)
-      .circle(radius * 0.55, -radius * 0.18, eyeR * 0.58)
-      .fill(0x111111);
 
     this.glow.clear();
     if (this.hasGlow) {
-      const gr = radius * 1.4;
+      const lighter = lighten(this.color, 0.32);
+      const gr = radius * 1.5;
       this.glow
-        .circle(0, 0, gr).fill({ color: lighter, alpha: 0.04 })
-        .circle(0, 0, gr * 0.85).fill({ color: lighter, alpha: 0.08 });
+        .circle(0, 0, gr).fill({ color: lighter, alpha: 0.05 })
+        .circle(0, 0, gr * 0.82).fill({ color: lighter, alpha: 0.08 });
     }
 
-    this.label.position.set(0, -radius - 14);
-    this.label.rotation = -this.container.rotation;
-    this.label.alpha = this.isAi ? 0.65 : 1;
+    if (this.ownRing) {
+      this.ownRing.clear();
+      const rr = radius * 1.28;
+      this.ownRing
+        .circle(0, 0, rr).stroke({ color: this.color, width: Math.max(2, radius * 0.06), alpha: 0.85 })
+        .circle(0, 0, rr).fill({ color: this.color, alpha: 0.05 });
+    }
   }
 
   /** Counter-scale the name label so it never renders smaller than `minPx` on-screen. */
@@ -196,7 +223,22 @@ export class FishSprite {
   setIdentity(name: string, color: string): void {
     this.label.text = name;
     this.color = parseColor(color);
-    this.draw(this.currentRadius);
+    this.decorate(this.currentRadius);
+    this.refreshTexture();
+  }
+
+  /** Swap the fish to a different species; the texture re-binds on the next update/refresh. */
+  setSpecies(species: string): void {
+    if (species === this.species) return;
+    this.species = species;
+    this.refreshTexture();
+    this.applySpriteScale();
+  }
+
+  /** Start (or restart) the mouth-open chomp animation. Called when this fish bites edible prey. */
+  triggerBite(): void {
+    this.biteActive = true;
+    this.biteAge = 0;
   }
 
   destroy(): void {

@@ -9,11 +9,11 @@ Then("I see the title overlay", async ({ page }) => {
   await expect(title.diveInButton).toContainText("DIVE IN");
 });
 
-Then("the first color swatch is selected by default", async ({ page }) => {
+Then("the default species is selected", async ({ page }) => {
   const title = new TitlePage(page);
-  await expect(title.selectedSwatch).toHaveCount(1);
-  // The default palette[0] is #ffd97f per scenes/title.ts.
-  await expect(title.selectedSwatch).toHaveAttribute("data-color", "#ffd97f");
+  await expect(title.selectedTile).toHaveCount(1);
+  // DEFAULT_SPECIES_ID is "clownfish" per shared/species.ts.
+  await expect(title.selectedTile).toHaveAttribute("data-species", "clownfish");
 });
 
 When("I type {string} into the name input", async ({ page }, name: string) => {
@@ -24,8 +24,8 @@ When("I leave the name input empty", async () => {
   // No-op: input starts empty in a fresh page.
 });
 
-When("I click the {string} color swatch", async ({ page }, color: string) => {
-  await new TitlePage(page).swatch(color).click();
+When("I click the {string} species", async ({ page }, id: string) => {
+  await new TitlePage(page).speciesTile(id).click();
 });
 
 When("I press Enter in the name input", async ({ page }) => {
@@ -37,10 +37,10 @@ When("I click DIVE IN", async ({ page }) => {
 });
 
 Then(
-  "the {string} swatch is selected",
-  async ({ page }, color: string) => {
+  "the {string} species is selected",
+  async ({ page }, id: string) => {
     const title = new TitlePage(page);
-    await expect(title.swatch(color)).toHaveClass(/selected/);
+    await expect(title.speciesTile(id)).toHaveClass(/selected/);
   }
 );
 
@@ -64,5 +64,14 @@ Then(
     await page.waitForFunction(() => (window as any).__test?.lastHello !== null);
     const hello = await page.evaluate(() => (window as any).__test.lastHello);
     expect(hello.color).toBe(expected);
+  }
+);
+
+Then(
+  "the hello message sent to the server has species {string}",
+  async ({ page }, expected: string) => {
+    await page.waitForFunction(() => (window as any).__test?.lastHello !== null);
+    const hello = await page.evaluate(() => (window as any).__test.lastHello);
+    expect(hello.species).toBe(expected);
   }
 );

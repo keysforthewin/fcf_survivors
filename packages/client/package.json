@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@fcf/shared": "workspace:*",
+    "@fontsource/outfit": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "pixi-filters": "^6.1.5",
     "pixi.js": "^8.5.0",
     "zod": "^3.23.0"

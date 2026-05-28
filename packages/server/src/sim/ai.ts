@@ -1,4 +1,4 @@
-import { AI, ARENA, canEat, massSpeedMult } from "@fcf/shared";
+import { AI, ARENA, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
 import { NPC_NAMES } from "./npc-names.ts";
@@ -58,10 +58,12 @@ export function spawnAiFish(world: World, mass?: number): Fish {
     vy: 0,
     targetVx: 0,
     targetVy: 0,
+    clientAuthoritative: false,
     headingX: 1,
     headingY: 0,
     mass: m,
     color: pick(AI_COLORS, rng),
+    species: pick(SPECIES, rng).id,
     name: pickAiName(rng, world.takenNames()),
     isAi: true,
     boost: false,

@@ -1,5 +1,6 @@
 import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
-import { ARENA, TICK } from "@fcf/shared";
+import { ARENA, TICK, DEFAULT_SPECIES_ID, isSpeciesId } from "@fcf/shared";
+import { applyClientWeaponHit } from "./sim/weapon.ts";
 import { World, type WorldDeps } from "./sim/world.ts";
 import { processLevelUps, applyCard, rerollCard, banishCard } from "./sim/levelup.ts";
 import { discardWeapon, discardPassive } from "./sim/discard.ts";
@@ -15,6 +16,8 @@ interface SocketData {
   startedAt: number;
   name: string;
   color: string;
+  /** Chosen fish species id (see shared/species.ts); reused as the respawn default. */
+  species: string;
   /**
    * Draw id of the pendingLevelUp set we last pushed a LevelUpMsg for. The
    * server increments fish.pendingLevelUpDrawId each time it assigns a fresh
@@ -55,6 +58,10 @@ function sanitizeName(raw: string): string {
 
 function sanitizeColor(raw: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#7fcfff";
+}
+
+function sanitizeSpecies(raw: string | undefined): string {
+  return raw !== undefined && isSpeciesId(raw) ? raw : DEFAULT_SPECIES_ID;
 }
 
 function ipHash(ip: string): string {
@@ -143,11 +150,10 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     }, 15_000);
   }
 
-  // game loop — fixed timestep. The sim integrates at exactly the cadence the client
-  // predicts against (PREDICT_STEP_S = TICK.ms). A variable wall-clock dt made
-  // stepFishMovement (explicitly NOT substep-invariant) disagree with the client every
-  // tick, which surfaced as the fish visibly speeding up / slowing down. Under sustained
-  // overload a fixed dt dilates game-time rather than teleporting the fish forward —
+  // game loop — fixed timestep. Human fish are client-authoritative (the client runs its
+  // own fixed-step sim at TICK.ms and reports kinematics), but AI fish still integrate here,
+  // and a fixed dt keeps stepFishMovement (explicitly NOT substep-invariant) stable. Under
+  // sustained overload a fixed dt dilates game-time rather than teleporting fish forward —
   // watch the `server tick` gauge in the F3 panel to spot an over-budget tick.
   const FIXED_DT = TICK.ms / 1000;
   const tickInterval = setInterval(() => {
@@ -379,7 +385,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         const id = `s${++socketCounter}`;
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? srv.requestIP(req)?.address ?? "unknown";
         const ok = srv.upgrade(req, {
-          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", levelUpSentDrawId: null, isSpectator: false, camX: ARENA.width / 2, camY: ARENA.height / 2 },
+          data: { id, ip, fishId: null, view: new ClientView(), startedAt: 0, name: "", color: "", species: DEFAULT_SPECIES_ID, levelUpSentDrawId: null, isSpectator: false, camX: ARENA.width / 2, camY: ARENA.height / 2 },
         });
         if (ok) return undefined;
         return new Response("Upgrade failed", { status: 500 });
@@ -419,11 +425,13 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (ws.data.fishId !== null) return;
           const name = sanitizeName(msg.name);
           const color = sanitizeColor(msg.color);
-          const fish = world.spawnPlayer(name, color, ws.data.id);
+          const species = sanitizeSpecies(msg.species);
+          const fish = world.spawnPlayer(name, color, ws.data.id, species);
           ws.data.fishId = fish.id;
           ws.data.startedAt = now;
           ws.data.name = name;
           ws.data.color = color;
+          ws.data.species = species;
           claimNameForHuman(name);
           playerSessions.set(fish.id, { startedAt: now, ipHash: ipHash(ws.data.ip), disconnected: false });
           send(ws, {
@@ -440,12 +448,29 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           const fish = world.fish.get(fid);
           if (!fish || !fish.alive) return;
           ws.data.view.ackSeq = msg.seq;
-          // clamp magnitude to 1
-          const mag = Math.hypot(msg.vx, msg.vy);
-          let nx = msg.vx;
-          let ny = msg.vy;
-          if (mag > 1) { nx /= mag; ny /= mag; }
-          world.applyInput(fish, nx, ny, msg.boost, now);
+          if (msg.x !== undefined && msg.y !== undefined) {
+            // Client-authoritative kinematics: trust the reported position/velocity/heading.
+            world.applyClientState(
+              fish,
+              {
+                x: msg.x,
+                y: msg.y,
+                vx: msg.pvx ?? 0,
+                vy: msg.pvy ?? 0,
+                hx: msg.hx ?? fish.headingX,
+                hy: msg.hy ?? fish.headingY,
+              },
+              msg.boost,
+              now,
+            );
+          } else {
+            // Legacy intent path (AI-driven cucumber tests / older clients).
+            const mag = Math.hypot(msg.vx, msg.vy);
+            let nx = msg.vx;
+            let ny = msg.vy;
+            if (mag > 1) { nx /= mag; ny /= mag; }
+            world.applyInput(fish, nx, ny, msg.boost, now);
+          }
         } else if (msg.t === "pickCard") {
           const fid = ws.data.fishId;
           if (fid === null) return;
@@ -474,6 +499,14 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (!fish || !fish.alive) return;
           if (fish.pendingLevelUp.length === 0) return;
           if (banishCard(world, fish, msg.cardId)) ws.data.levelUpSentDrawId = null;
+        } else if (msg.t === "weaponHit") {
+          const fid = ws.data.fishId;
+          if (fid === null) return;
+          const fish = world.fish.get(fid);
+          if (!fish || !fish.alive) return;
+          // Honor the client-reported hit (deduped against server detection via the
+          // projectile's re-hit gate). Records a HitEvent broadcast in the next snapshot.
+          applyClientWeaponHit(world, fish, msg.projectileId, msg.targetId, now);
         } else if (msg.t === "discardWeapon") {
           const fid = ws.data.fishId;
           if (fid === null) return;
@@ -511,11 +544,13 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           }
           const name = sanitizeName(msg.name ?? ws.data.name ?? "Fish");
           const color = sanitizeColor(msg.color ?? ws.data.color ?? "#7fcfff");
-          const fish = world.spawnPlayer(name, color, ws.data.id);
+          const species = sanitizeSpecies(msg.species ?? ws.data.species);
+          const fish = world.spawnPlayer(name, color, ws.data.id, species);
           ws.data.fishId = fish.id;
           ws.data.startedAt = now;
           ws.data.name = name;
           ws.data.color = color;
+          ws.data.species = species;
           ws.data.isSpectator = false;
           ws.data.levelUpSentDrawId = null;
           claimNameForHuman(name);
@@ -541,6 +576,10 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (msg.color !== undefined) {
             const color = sanitizeColor(msg.color);
             if (color !== fish.color) { fish.color = color; ws.data.color = color; changed = true; }
+          }
+          if (msg.species !== undefined) {
+            const species = sanitizeSpecies(msg.species);
+            if (species !== fish.species) { fish.species = species; ws.data.species = species; changed = true; }
           }
           if (changed) {
             // Force other clients' snapshot views to re-send name/color for this fish

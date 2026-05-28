@@ -4,6 +4,10 @@ export const HelloMsg = z.object({
   t: z.literal("hello"),
   name: z.string().min(1).max(16),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  // Chosen fish species id (see shared/species.ts). Optional + loosely validated here;
+  // the server sanitizes it to a known id (or default) so an unknown skin never rejects
+  // the whole hello. Legacy clients that omit it get the default species server-side.
+  species: z.string().max(40).optional(),
 });
 export type HelloMsg = z.infer<typeof HelloMsg>;
 
@@ -13,6 +17,17 @@ export const InputMsg = z.object({
   vx: z.number().min(-1).max(1),
   vy: z.number().min(-1).max(1),
   boost: z.boolean(),
+  // --- client-authoritative kinematics (optional) ---
+  // The client owns its own fish: when these are present the server writes them
+  // straight onto the fish (clamped to the arena) instead of integrating movement
+  // from the vx/vy intent. They are optional so AI-driven cucumber tests and any
+  // legacy client keep working through the intent path. See world.applyClientState.
+  x: z.number().optional(),
+  y: z.number().optional(),
+  pvx: z.number().optional(),
+  pvy: z.number().optional(),
+  hx: z.number().optional(),
+  hy: z.number().optional(),
 });
 export type InputMsg = z.infer<typeof InputMsg>;
 
@@ -26,6 +41,7 @@ export const IdentityMsg = z.object({
   t: z.literal("identity"),
   name: z.string().min(1).max(16).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  species: z.string().max(40).optional(),
 });
 export type IdentityMsg = z.infer<typeof IdentityMsg>;
 
@@ -40,6 +56,7 @@ export const RespawnMsg = z.object({
   t: z.literal("respawn"),
   name: z.string().min(1).max(16).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  species: z.string().max(40).optional(),
 });
 export type RespawnMsg = z.infer<typeof RespawnMsg>;
 
@@ -73,6 +90,16 @@ export const BanishCardMsg = z.object({
 });
 export type BanishCardMsg = z.infer<typeof BanishCardMsg>;
 
+// Client-reported weapon hit: the player's own projectile (`projectileId`) visually overlapped
+// an enemy fish (`targetId`). The server honors it (sharing the projectile's re-hit gate with
+// its own detection so damage is never double-applied). See world/weapon applyClientWeaponHit.
+export const WeaponHitMsg = z.object({
+  t: z.literal("weaponHit"),
+  projectileId: z.number().int().nonnegative(),
+  targetId: z.number().int().nonnegative(),
+});
+export type WeaponHitMsg = z.infer<typeof WeaponHitMsg>;
+
 export const ClientMsg = z.discriminatedUnion("t", [
   HelloMsg,
   InputMsg,
@@ -85,6 +112,7 @@ export const ClientMsg = z.discriminatedUnion("t", [
   SetLevelUpDismissedMsg,
   RerollCardMsg,
   BanishCardMsg,
+  WeaponHitMsg,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -106,6 +134,10 @@ export interface EntityDelta {
   hy?: number;
   mass?: number;
   color?: string;
+  /** Fish only (first-seen / on change): chosen species id → which photo sprite to render. */
+  species?: string;
+  /** Fish only (transient, set only on the tick this fish bit prey): drives the chomp/lurch anim. */
+  biting?: boolean;
   name?: string;
   weaponId?: string;
   ownerId?: number;
@@ -113,6 +145,15 @@ export interface EntityDelta {
   isAi?: boolean;
   /** Fruit only (first-seen): which token this fruit grants on pickup. */
   reward?: "reroll" | "banish";
+  /**
+   * Orbital projectiles only: the blade's absolute orbit angle (rad), angular velocity
+   * (rad/s) and orbit-ring radius (px). The client re-anchors to orbitAngle each snapshot
+   * and extrapolates at orbitAngular between them, anchored to the owner's rendered position,
+   * so the orbit animates at the client's framerate instead of stepping at the snapshot rate.
+   */
+  orbitAngle?: number;
+  orbitAngular?: number;
+  orbitRadius?: number;
 }
 
 /** Per-tick hit event: a projectile damaged a fish. Used for client-side hit markers. */

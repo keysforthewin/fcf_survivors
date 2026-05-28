@@ -5,5 +5,6 @@ export * from "./entities.js";
 export * from "./protocol.js";
 export * from "./weapons.js";
 export * from "./passives.js";
+export * from "./species.js";
 export * from "./evolutions.js";
 export * from "./cards.js";

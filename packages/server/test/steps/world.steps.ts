@@ -1,6 +1,6 @@
 import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
-import { ARENA, FISH } from "@fcf/shared";
+import { ARENA, FISH, DEFAULT_SPECIES_ID } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import {
   makeWorld,
@@ -10,6 +10,7 @@ import {
   type FishSeed,
 } from "../support/world-factory.ts";
 import type { Fish, Pellet, Chunk, AiState } from "../../src/sim/entity.ts";
+import { applyClientWeaponHit } from "../../src/sim/weapon.ts";
 
 function ensureSim(self: TestWorld, seed = 1): TestSim {
   if (!self.sim) self.sim = makeWorld({ seed });
@@ -32,6 +33,7 @@ export function addFish(sim: TestSim, seed: FishSeed): Fish {
     headingY: 0,
     mass,
     color: seed.color ?? "#7fcfff",
+    species: seed.species ?? DEFAULT_SPECIES_ID,
     name: seed.name ?? `Fish${id}`,
     isAi: seed.isAi ?? false,
     boost: false,
@@ -164,6 +166,48 @@ Given(
   }
 );
 
+Given(
+  "{string} owns a projectile at \\({float}, {float}\\) with damage {float}",
+  function (this: TestWorld, name: string, x: number, y: number, damage: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    if (!f) throw new Error(`No fish named ${name}`);
+    const proj = sim.world.spawnProjectile({
+      ownerId: f.id,
+      weaponId: "bubble",
+      x, y, vx: 0, vy: 0,
+      damage,
+      radius: 20,
+      expiresAt: sim.clock.now() + 60_000,
+      behavior: "linear",
+      reHitMs: 0,
+    });
+    this.data.set(`${name}.projId`, proj.id);
+  }
+);
+
+When(
+  "{string} reports a client weapon hit on {string}",
+  function (this: TestWorld, attacker: string, target: string) {
+    const sim = this.requireSim();
+    const a = tryFish(sim, attacker);
+    const t = tryFish(sim, target);
+    if (!a || !t) throw new Error(`Missing fish ${attacker} or ${target}`);
+    const projId = this.data.get(`${attacker}.projId`) as number | undefined;
+    if (projId == null) throw new Error(`No projectile recorded for ${attacker}`);
+    const applied = applyClientWeaponHit(sim.world, a, projId, t.id, sim.clock.now());
+    this.data.set("lastWeaponHitApplied", applied);
+  }
+);
+
+Then("the client weapon hit was applied", function (this: TestWorld) {
+  assert.equal(this.data.get("lastWeaponHitApplied"), true, "expected weapon hit to apply");
+});
+
+Then("the client weapon hit was rejected", function (this: TestWorld) {
+  assert.equal(this.data.get("lastWeaponHitApplied"), false, "expected weapon hit to be rejected");
+});
+
 /* -------- Loadout -------- */
 
 Given(
@@ -215,6 +259,19 @@ When(
     if (!f) throw new Error(`No fish named ${name}`);
     const [nx, ny] = clampInput(vx, vy);
     sim.world.applyInput(f, nx, ny, true, sim.clock.now());
+  }
+);
+
+When(
+  "{string} reports client position \\({float}, {float}\\) velocity \\({float}, {float}\\)",
+  function (this: TestWorld, name: string, x: number, y: number, vx: number, vy: number) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    if (!f) throw new Error(`No fish named ${name}`);
+    const hm = Math.hypot(vx, vy);
+    const hx = hm > 0.01 ? vx / hm : 1;
+    const hy = hm > 0.01 ? vy / hm : 0;
+    sim.world.applyClientState(f, { x, y, vx, vy, hx, hy }, false, sim.clock.now());
   }
 );
 
@@ -468,6 +525,16 @@ Then(
     assert.ok(f, `${name} missing`);
     assert.ok(f.x >= 0 && f.x <= ARENA.width, `${name} x=${f.x} out of arena`);
     assert.ok(f.y >= 0 && f.y <= ARENA.height, `${name} y=${f.y} out of arena`);
+  }
+);
+
+Then(
+  "{string} is at approximately \\({float}, {float}\\)",
+  function (this: TestWorld, name: string, x: number, y: number) {
+    const f = tryFish(this.requireSim(), name);
+    assert.ok(f, `${name} missing`);
+    assert.ok(Math.abs(f.x - x) < 1, `${name} x=${f.x} expected ~${x}`);
+    assert.ok(Math.abs(f.y - y) < 1, `${name} y=${f.y} expected ~${y}`);
   }
 );
 

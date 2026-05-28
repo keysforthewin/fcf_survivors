@@ -16,7 +16,7 @@ function encodeHeading(v: number): number {
   return Math.round(v * HEADING_PRECISION) / HEADING_PRECISION;
 }
 
-function fishDelta(f: Fish, prev: { mass?: number } | undefined): EntityDelta {
+function fishDelta(f: Fish, prev: { mass?: number } | undefined, tick: number): EntityDelta {
   const delta: EntityDelta = {
     id: f.id,
     kind: "fish",
@@ -26,6 +26,7 @@ function fishDelta(f: Fish, prev: { mass?: number } | undefined): EntityDelta {
   if (!prev || Math.abs((prev.mass ?? -1) - f.mass) > 0.5) delta.mass = Math.round(f.mass);
   if (!prev) {
     delta.color = f.color;
+    delta.species = f.species;
     delta.name = f.name;
     delta.isAi = f.isAi;
   }
@@ -33,6 +34,9 @@ function fishDelta(f: Fish, prev: { mass?: number } | undefined): EntityDelta {
   delta.vy = Math.round(f.vy);
   delta.hx = encodeHeading(f.headingX);
   delta.hy = encodeHeading(f.headingY);
+  // Transient: set only on the tick this fish bit edible prey. Drives the eater's chomp/lurch
+  // animation on every client that can see it.
+  if (f.bitingTick === tick) delta.biting = true;
   return delta;
 }
 
@@ -49,6 +53,14 @@ function projectileDelta(proj: Projectile, prev: unknown): EntityDelta {
     delta.weaponId = proj.weaponId;
     delta.ownerId = proj.ownerId;
     delta.radius = Math.round(proj.radius);
+  }
+  // Orbital blades carry their angle each tick so the client can animate the orbit at its
+  // own framerate (re-anchor to orbitAngle, extrapolate at orbitAngular). orbitRadius grows
+  // with owner mass, so it's resent too; both are tiny and orbitals are few.
+  if (proj.behavior === "orbital" && proj.orbitAngle !== undefined) {
+    delta.orbitAngle = Math.round(proj.orbitAngle * 1000) / 1000;
+    delta.orbitAngular = proj.orbitAngular;
+    delta.orbitRadius = Math.round(proj.orbitRadius ?? 0);
   }
   return delta;
 }
@@ -73,7 +85,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     if (dx * dx + dy * dy > r2) return;
     seen.add(f.id);
     const prev = view.prevSent.get(f.id);
-    entities.push(fishDelta(f, prev));
+    entities.push(fishDelta(f, prev, world.tick));
     view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass });
   };
 
@@ -248,7 +260,7 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     if (!f.alive) continue;
     seen.add(f.id);
     const prev = view.prevSent.get(f.id);
-    entities.push(fishDelta(f, prev));
+    entities.push(fishDelta(f, prev, world.tick));
     view.prevSent.set(f.id, { kind: "fish", x: f.x, y: f.y, mass: f.mass });
   }
 

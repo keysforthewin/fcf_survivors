@@ -1,10 +1,17 @@
+import "@fontsource/outfit/400.css";
+import "@fontsource/outfit/500.css";
+import "@fontsource/outfit/600.css";
+import "@fontsource/outfit/700.css";
+import "@fontsource/space-grotesk/500.css";
+import "@fontsource/space-grotesk/700.css";
 import { Application } from "pixi.js";
 import { NetSocket } from "./net/socket.ts";
 import { showTitle } from "./scenes/title.ts";
 import { showDeath } from "./scenes/death.ts";
 import { ArenaScene } from "./scenes/arena.ts";
 import { loadIdentity, saveIdentity } from "./identity.ts";
-import type { EatenMsg, LeaderboardEntry, WelcomeMsg } from "@fcf/shared";
+import { preloadFishTextures } from "./render/species-textures.ts";
+import { DEFAULT_SPECIES_ID, type EatenMsg, type LeaderboardEntry, type WelcomeMsg } from "@fcf/shared";
 
 async function main() {
   const root = document.getElementById("game-root")!;
@@ -18,15 +25,20 @@ async function main() {
   });
   root.appendChild(app.canvas);
 
+  // Warm the photo-real fish textures before the title/arena so sprites render immediately.
+  await preloadFishTextures();
+
   let lastLeaderboard: LeaderboardEntry[] = [];
 
-  // Initial title pass to pick name/color.
-  let prefill = loadIdentity();
-  const choice = await showTitle(prefill);
-  prefill = { name: choice.name, color: choice.color };
-  saveIdentity(prefill);
+  // Initial title pass to pick name + species.
+  const saved = loadIdentity();
+  const choice = await showTitle(saved);
+  const species = choice.species ?? saved.species ?? DEFAULT_SPECIES_ID;
+  const identity = { name: choice.name, color: choice.color, species };
+  saveIdentity(identity);
   (window as any).__playerName = choice.name;
   (window as any).__playerColor = choice.color;
+  (window as any).__playerSpecies = species;
 
   // One persistent websocket spans every dive — respawn reuses it instead of
   // dropping the connection. This is what makes "death overlay over live game"
@@ -42,7 +54,7 @@ async function main() {
     alert("Could not connect to game server. Is it running?");
     return;
   }
-  net.hello(choice.name, choice.color);
+  net.hello(choice.name, choice.color, species);
 
   let pendingDeath: EatenMsg | null = null;
   let deathListeners: Array<(msg: EatenMsg) => void> = [];
@@ -131,7 +143,7 @@ async function main() {
     // DIVE AGAIN — reuse the existing socket and identity.
     const id = loadIdentity();
     arena.exitSpectatorMode();
-    net.respawn(id.name, id.color);
+    net.respawn(id.name, id.color, id.species);
     await waitForWelcome();
   }
 }

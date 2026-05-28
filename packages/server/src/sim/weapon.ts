@@ -396,6 +396,10 @@ function tickOrbital(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLeve
     proj.damage = damage;
     proj.radius = radius;
     proj.reHitMs = lvl.reHitMs ?? 500;
+    // Shipped to clients so they animate the orbit smoothly at their own framerate.
+    proj.orbitAngle = a;
+    proj.orbitAngular = angular;
+    proj.orbitRadius = orbitR;
   }
 }
 
@@ -557,6 +561,42 @@ export function applyProjectileDamage(world: World, now: number): void {
       }
     }
   }
+}
+
+/**
+ * Apply a client-reported weapon hit. The client owns its own fish and renders projectiles
+ * at the present while enemies lag ~150ms behind, so a hit that visually lands on the client
+ * can disagree with the server's geometry — we honor the client's call rather than re-deriving
+ * it. This complements (does not replace) server-side `applyProjectileDamage`: both share the
+ * projectile's `hits` re-hit gate, so a hit detected by one path can never be double-applied by
+ * the other. The only sanity check is a view-radius bound, so a buggy client can't snipe across
+ * the map; geometry/reach is intentionally trusted. Returns true if damage was applied.
+ */
+export function applyClientWeaponHit(
+  world: World,
+  owner: Fish,
+  projectileId: number,
+  targetId: number,
+  now: number,
+): boolean {
+  const proj = world.projectiles.get(projectileId);
+  if (!proj || proj.ownerId !== owner.id) return false;
+  if (now >= proj.expiresAt || proj.damage <= 0) return false;
+  const target = world.fish.get(targetId);
+  if (!target || !target.alive || target.id === owner.id) return false;
+  // Sanity bound only — the client reports on-screen hits, so this passes naturally.
+  if (!withinOwnerView(owner, target.x, target.y, viewRadius(owner.mass) ** 2)) return false;
+  // Re-hit gate shared with applyProjectileDamage (prevents double-apply and message spam).
+  if (proj.reHitMs > 0) {
+    const lastHit = proj.hits.get(target.id) ?? 0;
+    if (now - lastHit < proj.reHitMs) return false;
+  } else if (proj.hits.has(target.id)) {
+    return false; // single-hit projectile already spent on this target
+  }
+  proj.hits.set(target.id, now);
+  applyHit(world, target, owner, proj.damage, proj.weaponId);
+  if (proj.behavior === "linear") proj.expiresAt = now; // single-hit bullets expire on contact
+  return true;
 }
 
 export type { WeaponId };

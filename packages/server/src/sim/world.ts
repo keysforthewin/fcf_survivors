@@ -1,4 +1,4 @@
-import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, centerGaussianPoint, clampToArena, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, stepFishMovement, xpDroppedOnDeath } from "@fcf/shared";
+import { AI, ARENA, BITE, DEFAULT_SPECIES_ID, FISH, FRUIT, MOUTH, PELLET, SPAWN, TICK, boostDurationMs, canEat, centerGaussianPoint, clampToArena, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, stepFishMovement, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
 import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
@@ -91,7 +91,7 @@ export class World {
     for (const p of this.projectiles.values()) this.projectileHash.insert(p.x, p.y, p);
   }
 
-  spawnPlayer(name: string, color: string, socketId: string): Fish {
+  spawnPlayer(name: string, color: string, socketId: string, species: string = DEFAULT_SPECIES_ID): Fish {
     const fish: Fish = {
       id: this.nextId(),
       kind: "fish",
@@ -101,12 +101,15 @@ export class World {
       vy: 0,
       targetVx: 0,
       targetVy: 0,
+      clientAuthoritative: false,
       headingX: 1,
       headingY: 0,
       mass: FISH.startMass,
       color,
+      species,
       name,
       isAi: false,
+      spawnProtectedUntil: this.now() + SPAWN.protectMs,
       boost: false,
       boostUntil: 0,
       boostReadyAt: 0,
@@ -304,6 +307,47 @@ export class World {
     }
   }
 
+  /**
+   * Apply client-authoritative kinematics for a player's own fish. The client owns
+   * its position, velocity and heading; we trust them (this is a smoothness-first,
+   * non-anti-cheat design) and only clamp to the arena as a sanity guard against a
+   * buggy client sending NaN / out-of-bounds. Once called, world.step stops
+   * integrating this fish's movement (see the `clientAuthoritative` branch there).
+   *
+   * Boost cooldown bookkeeping stays server-side so the HUD stays honest; the client
+   * applies the boost speed multiplier itself in its local sim.
+   */
+  applyClientState(
+    fish: Fish,
+    s: { x: number; y: number; vx: number; vy: number; hx: number; hy: number },
+    boost: boolean,
+    now: number,
+  ): void {
+    if (boost && now >= fish.boostReadyAt) {
+      fish.boost = true;
+      fish.boostUntil = now + boostDurationMs(fish.mass);
+      fish.boostReadyAt = now + getBoostCooldown(fish);
+    }
+    fish.clientAuthoritative = true;
+    // Mirror the movement freeze: ignore reported position while the level-up modal
+    // is open and not dismissed (the client enforces this too, this is belt-and-braces).
+    if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) {
+      fish.vx = 0;
+      fish.vy = 0;
+      return;
+    }
+    fish.x = s.x;
+    fish.y = s.y;
+    fish.vx = s.vx;
+    fish.vy = s.vy;
+    const hm = Math.hypot(s.hx, s.hy);
+    if (hm > 0.01) {
+      fish.headingX = s.hx / hm;
+      fish.headingY = s.hy / hm;
+    }
+    clampToArena(fish, fish.mass);
+  }
+
   step(dtSec: number, now: number): void {
     this.tick++;
 
@@ -335,6 +379,9 @@ export class World {
       if (!f.alive) continue;
       if (!f.isAi) {
         if (f.boost && now >= f.boostUntil) f.boost = false;
+        // Client-authoritative fish own their position/velocity/heading — the client
+        // reported them via applyClientState, so we don't integrate or re-aim here.
+        if (f.clientAuthoritative) continue;
         // Player movement (velocity smoothing + integrate + arena clamp) lives in
         // @fcf/shared so the client predictor runs identical physics. See movement.ts.
         stepFishMovement(f, f.targetVx, f.targetVy, getMoveSpeed(f), f.boost ? FISH.boostMultiplier : 1, f.mass, dtSec);
@@ -452,20 +499,23 @@ export class World {
     // (level-ups are applied by processLevelUps; see sim/levelup.ts)
 
     // collisions: fish eat smaller fish.
-    // Predators only eat prey within a front mouth cone (heading-aligned).
-    // Prey outside the cone can swim alongside / behind without being chomped —
-    // this is the "smaller fish nibbles the giant" loop. Stationary fish have
-    // no defined cone, so they get a 360° fallback (still get eaten if overlapped).
+    // Eating is ANY-CONTACT and omnidirectional: the moment two hitboxes overlap (from any
+    // angle) the bigger fish eats the smaller, exactly like the pellet/chunk loops above.
+    // The front mouth cone + suction below is a *bonus reach* only — it vacuums prey toward
+    // a moving fish's mouth from in front so big (slow) fish can still reel prey in, but the
+    // eat itself no longer requires facing the prey. Smaller fish must keep their distance,
+    // not just stay behind. Stationary fish have no suction cone (still eat on contact).
     const fishList = [...this.fish.values()];
     for (const a of fishList) {
       if (!a.alive) continue;
       const rA = fishRadius(a.mass);
-      // Close Encounters pushes the mouth point farther forward and widens the
-      // bite zone, so you can vacuum prey from farther in front. `grab` is 0
-      // without the passive (and for AI, who carry none), leaving base eating
-      // byte-identical; the front-cone gate is untouched, so it stays directional.
+      // Close Encounters pushes the suction mouth-point farther forward and widens the bite
+      // zone. `grab` is 0 without the passive (and for AI). It scales only the front SUCTION
+      // reach below — the contact-eat is omnidirectional and ignores it.
       const grab = MOUTH.reachBonus * ((a.isAi ? 1 : getEatRangeMult(a)) - 1);
-      const reach = rA + MOUTH.suctionExtraRadius + 80 + grab * 2;
+      // Query wide enough to catch a just-touching large prey (up to ~2·rA away centre-to-centre)
+      // as well as the forward suction zone.
+      const reach = 2 * rA + MOUTH.suctionExtraRadius + MOUTH.reachBonus + grab * 2;
       scratch.length = 0;
       this.fishHash.query(a.x, a.y, reach, scratch);
       const headingMag = Math.hypot(a.headingX, a.headingY);
@@ -475,42 +525,45 @@ export class World {
       for (const b of scratch as Fish[]) {
         if (b.id === a.id || !b.alive) continue;
         if (!canEat(a.mass, b.mass)) continue;
+        // Spawn protection: a freshly (re)spawned player can't be eaten for a short window.
+        if (b.spawnProtectedUntil && now < b.spawnProtectedUntil) continue;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const dist = Math.hypot(dx, dy);
         const rB = fishRadius(b.mass);
 
-        // Direction gate: if predator is moving, require prey roughly in front.
-        if (!stationary && dist > 0.001) {
-          const dot = (hx * dx + hy * dy) / dist;
-          if (dot < MOUTH.coneCos) continue;
+        // (1) Any-contact eat: hitboxes overlapping from ANY angle eats edible prey — the same
+        // simple circle test the pellet/chunk loops use, so flank and rear bites count.
+        let eat = dist <= rA + rB + MOUTH.contactMargin;
+
+        // (2) Front suction bonus (directional, Close-Encounters-extended): prey not yet touching
+        // but inside the forward mouth bite-zone is reeled toward the mouth point, and eaten once
+        // it penetrates — so big (slow) fish can still vacuum prey in from in front, beyond body
+        // contact. Skipped for stationary fish (no defined cone) and for prey outside the cone, so
+        // you can still shadow a giant from behind/the side until you actually touch it.
+        if (!eat && !stationary) {
+          const dot = dist > 0.001 ? (hx * dx + hy * dy) / dist : 1;
+          if (dot >= MOUTH.coneCos) {
+            const mouthOffset = rA + MOUTH.suctionExtraRadius * 0.5 + grab;
+            const mx = a.x + hx * mouthOffset;
+            const my = a.y + hy * mouthOffset;
+            const bite = rA + MOUTH.suctionExtraRadius + grab;
+            const mdx = b.x - mx;
+            const mdy = b.y - my;
+            const mouthDist2 = mdx * mdx + mdy * mdy;
+            if (mouthDist2 <= bite * bite) {
+              if (mouthDist2 <= (bite - rB * 0.5) * (bite - rB * 0.5)) {
+                eat = true; // penetrated the bite zone
+              } else {
+                // Reel prey toward the mouth this tick; the bite resolves a tick or two later.
+                b.x += (mx - b.x) * MOUTH.suctionPullPerTick;
+                b.y += (my - b.y) * MOUTH.suctionPullPerTick;
+              }
+            }
+          }
         }
 
-        // Mouth point sits half a suction buffer in front of the predator.
-        // Effective bite radius extends rA + suctionExtraRadius from that point.
-        // No suction from outside the bite zone — small fish must actually enter
-        // the danger area before the giant can vacuum them up.
-        const mouthOffset = rA + MOUTH.suctionExtraRadius * 0.5 + grab;
-        const mx = stationary ? a.x : a.x + hx * mouthOffset;
-        const my = stationary ? a.y : a.y + hy * mouthOffset;
-        const mdx = b.x - mx;
-        const mdy = b.y - my;
-        const mouthDist2 = mdx * mdx + mdy * mdy;
-        const bite = rA + MOUTH.suctionExtraRadius + grab;
-        if (mouthDist2 > bite * bite) continue;
-
-        // Within mouth — confirm prey has actually penetrated past 50% rB into
-        // the bite zone, OR is already overlapping the body (close-range chomp).
-        const overlapByBody = dist < rA - rB * 0.5;
-        const overlapByMouth = mouthDist2 < (bite - rB * 0.5) * (bite - rB * 0.5);
-        if (!overlapByBody && !overlapByMouth) {
-          // Pull prey toward mouth this tick; bite resolves next tick.
-          const pullX = (mx - b.x) * MOUTH.suctionPullPerTick;
-          const pullY = (my - b.y) * MOUTH.suctionPullPerTick;
-          b.x += pullX;
-          b.y += pullY;
-          continue;
-        }
+        if (!eat) continue;
 
         // a eats b
         const baseGain = b.mass * (1 - FISH.massTaxOnEat);
@@ -519,8 +572,15 @@ export class World {
         a.kills += 1;
         // XP awarded scales with the victim's level — eating a high-level fish is worth more.
         a.xp += xpDroppedOnDeath(b.level, b.mass);
-        b.alive = false;
-        // mark b for removal at end of tick (handled by caller)
+        b.alive = false; // marked for removal at end of tick (handled by caller)
+        // Bite feedback: flag the eater for the snapshot (drives the remote chomp anim) and, for
+        // AI eaters, apply the real forward lunge. Human eaters are client-authoritative — their
+        // client applies its own lunge and reports it, so we don't touch their velocity here.
+        a.bitingTick = this.tick;
+        if (a.isAi && !stationary) {
+          a.vx += hx * BITE.lungeImpulse;
+          a.vy += hy * BITE.lungeImpulse;
+        }
       }
     }
 

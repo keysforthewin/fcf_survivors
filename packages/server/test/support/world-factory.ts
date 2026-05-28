@@ -1,3 +1,4 @@
+import { DEFAULT_SPECIES_ID } from "@fcf/shared";
 import { World, type WorldDeps } from "../../src/sim/world.ts";
 import type { Fish, Pellet, Fruit, AiState } from "../../src/sim/entity.ts";
 import { seededRng } from "./seeded-rng.ts";
@@ -5,6 +6,7 @@ import { seededRng } from "./seeded-rng.ts";
 export interface FishSeed {
   name?: string;
   color?: string;
+  species?: string;
   x: number;
   y: number;
   mass?: number;
@@ -89,6 +91,7 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
       headingY: 0,
       mass,
       color: seed.color ?? "#7fcfff",
+      species: seed.species ?? DEFAULT_SPECIES_ID,
       name: seed.name ?? `Fish${id}`,
       isAi: seed.isAi ?? false,
       boost: false,
