@@ -30,7 +30,7 @@ When(
     const sim = this.requireSim();
     const f = tryFish(sim, name);
     assert.ok(f, `${name} missing`);
-    discardPassive(f, passiveId as PassiveId);
+    discardPassive(sim.world, f, passiveId as PassiveId);
   },
 );
 

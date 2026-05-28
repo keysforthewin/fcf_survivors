@@ -123,6 +123,8 @@ export interface HitEvent {
   targetId: number;
   /** True when the receiving socket owns the projectile that caused this hit. */
   byOwner: boolean;
+  /** Weapon that landed the hit — lets the client pick or mute per-weapon hit sounds. */
+  weaponId?: string;
 }
 
 /** Per-tick zap event: a radial-pulse weapon fired and struck fish. Drives lightning bolts. */
@@ -195,6 +197,13 @@ export interface SnapshotMsg {
   };
   /** Server's current time, always sent (matches you.serverNow when present). */
   serverNow: number;
+  /**
+   * Wall-clock duration (ms) of the server tick body that produced this snapshot —
+   * the sim step + post-step pipeline, excluding the broadcast itself. Diagnostic
+   * only (F3 network panel); >TICK.ms means the tick is over budget. Optional for
+   * back-compat with any builder that doesn't set it.
+   */
+  serverTickMs?: number;
   /** True when this snapshot is being delivered to a spectator socket (no local fish). */
   spectator?: boolean;
   entities: EntityDelta[];

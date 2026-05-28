@@ -23,8 +23,10 @@ Feature: Weapon damage
     Then "Chunky" is alive
     And "Chunky" has mass approximately 79
 
-  Scenario: A weapon hit shrinks but never kills — fish floors at starter mass
+  Scenario: A weapon hit shrinks a fish's mass
     # Equal masses prevent the eat collision from firing while the pulse damages the fish.
+    # One L1 pulse over 30 ticks barely dents a mass-30 fish. (Weapons can kill by
+    # draining mass to zero — see weapon-kill.feature — but that takes sustained fire.)
     Given a player "Apex" at (4000, 4000) with mass 30
     And "Apex" has weapon "pulse" at level 1
     And an AI fish "Wounded" at (4200, 4000) with mass 30
@@ -33,9 +35,10 @@ Feature: Weapon damage
     And "Wounded" has at most mass 29.5
 
   Scenario: A pulse weapon out of range leaves the AI fish untouched
+    # FarOff sits 3500 units out — beyond even the buffed L1 pulse radius (2500).
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 1
-    And an AI fish "FarOff" at (4400, 4000) with mass 10
+    And an AI fish "FarOff" at (7500, 4000) with mass 10
     When the world advances 1 tick
     Then "FarOff" is alive
     And "FarOff" has mass 10
@@ -49,11 +52,20 @@ Feature: Weapon damage
     And "Apex" has 1 weapon hit
     And "Apex" has dealt at least 1 damage
 
-  Scenario: Each fish a single pulse strikes counts as its own hit
-    # Targets sit ~180 units out — inside the 250 pulse radius but beyond Apex's
-    # ~133 eat reach, so they're damaged (and counted) without being swallowed.
+  Scenario: A hit event carries the firing weapon id
+    # The client uses this to pick (or suppress) per-weapon hit sounds.
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 1
+    And an AI fish "Minnow" at (4150, 4000) with mass 25
+    When the world advances 1 tick
+    Then the latest hit was from weapon "pulse"
+
+  Scenario: Each fish a single pulse strikes counts as its own hit
+    # Targets sit ~180 units out — inside the 280 pulse radius but beyond Apex's
+    # ~133 eat reach, so they're damaged (and counted) without being swallowed.
+    # Lv2 pulse caps targets at 2 — both fish in range stay below the cap.
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "pulse" at level 2
     And an AI fish "Left" at (3820, 4000) with mass 20
     And an AI fish "Up" at (4000, 4180) with mass 20
     When the world advances 1 tick
@@ -61,16 +73,27 @@ Feature: Weapon damage
     And "Apex" has dealt at least 2 damage
 
   Scenario: A pulse emits a radial zap to every struck fish
-    # Same layout as the per-hit scenario above: both targets inside the 250
-    # pulse radius but beyond Apex's ~133 eat reach.
+    # Same layout as the per-hit scenario above: both targets inside the 280
+    # pulse radius but beyond Apex's ~133 eat reach (Lv2 pulse, cap = 2).
     Given a player "Apex" at (4000, 4000) with mass 50
-    And "Apex" has weapon "pulse" at level 1
+    And "Apex" has weapon "pulse" at level 2
     And an AI fish "Left" at (3820, 4000) with mass 20
     And an AI fish "Up" at (4000, 4180) with mass 20
     When the world advances 1 tick
     Then a zap event was emitted by "Apex"
     And the zap is not a chain
     And the zap strikes "Left" and "Up"
+
+  Scenario: ESP caps targets to one at level 1, striking the nearest fish
+    # Two fish in range; Lv1 cap = 1, so only the closer ("Left", ~180 units)
+    # is hit, not the farther ("Far", ~240 units).
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "pulse" at level 1
+    And an AI fish "Left" at (3820, 4000) with mass 20
+    And an AI fish "Far" at (4000, 4240) with mass 20
+    When the world advances 1 tick
+    Then "Apex" has 1 weapon hits
+    And the zap strikes "Left"
 
   Scenario: An eel emits a chain zap ordered nearest-first
     # Eel (pulseRadius 500) threads player -> nearest fish -> next nearest.
@@ -85,9 +108,10 @@ Feature: Weapon damage
     And the zap path is "Apex" then "Near" then "Far"
 
   Scenario: A pulse with nothing in range emits no zap
+    # FarOff sits 3500 units out — beyond even the buffed L1 pulse radius (2500).
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 1
-    And an AI fish "FarOff" at (4400, 4000) with mass 10
+    And an AI fish "FarOff" at (7500, 4000) with mass 10
     When the world advances 1 tick
     Then no zap event was emitted
 

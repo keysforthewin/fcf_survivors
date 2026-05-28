@@ -1,6 +1,6 @@
-import { WEAPONS, getWeaponLevel, FISH, fishRadius } from "@fcf/shared";
+import { WEAPONS, getWeaponLevel, FISH, fishRadius, viewRadius, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
-import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState } from "./entity.ts";
+import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState } from "./entity.ts";
 import type { World } from "./world.ts";
 import { getWeaponDamageMult, getWeaponCooldownMult, getDamageTakenMult } from "./passives.ts";
 
@@ -8,14 +8,28 @@ import { getWeaponDamageMult, getWeaponCooldownMult, getDamageTakenMult } from "
 const MAX_FISH_RADIUS_PAD = 200;
 
 /**
- * Apply weapon damage as mass drain. Mass floors at FISH.startMass so weapons
- * can never kill — only being eaten kills a fish. Records a hit event for
- * client-side feedback.
+ * On-screen test: is (x, y) within the owner's view radius? Mirrors the snapshot
+ * interest filter (net/snapshot.ts) and the Alien Friends laser gate, so a weapon
+ * never damages a fish its owner can't see. Pass viewR2 = viewRadius(owner.mass)²,
+ * computed once per fire rather than per candidate.
  */
-function applyHit(world: World, target: Fish, owner: Fish, damage: number): void {
+function withinOwnerView(owner: Fish, x: number, y: number, viewR2: number): boolean {
+  const dx = x - owner.x;
+  const dy = y - owner.y;
+  return dx * dx + dy * dy <= viewR2;
+}
+
+/**
+ * Apply weapon damage as mass drain. Mass is the fish's health: drained to zero
+ * it dies (eating is no longer the only kill). The fish that lands the lethal hit
+ * is credited — recorded on the victim so the death handler attributes ranged
+ * kills (ESP/aliens) correctly instead of the 250-unit proximity guess. Records a
+ * hit event for client-side feedback.
+ */
+function applyHit(world: World, target: Fish, owner: Fish, damage: number, weaponId: WeaponId): void {
   const resist = target.isAi ? 1 : getDamageTakenMult(target);
   const massLoss = damage * FISH.damageMassLossRatio * resist;
-  target.mass = Math.max(FISH.startMass, target.mass - massLoss);
+  target.mass -= massLoss;
   // Credit the firer's leaderboard stats. AI never fire, but guard anyway.
   if (!owner.isAi) {
     owner.hits += 1;
@@ -27,7 +41,20 @@ function applyHit(world: World, target: Fish, owner: Fish, damage: number): void
     damage,
     targetId: target.id,
     ownerId: owner.id,
+    weaponId,
   });
+
+  // Lethal hit: mass fully drained. Mark dead (removed at end of tick by the
+  // server loop, same path as eating-deaths) and credit the shooter.
+  if (target.alive && target.mass <= 0) {
+    target.alive = false;
+    target.killedByName = owner.name;
+    target.killedByMass = owner.mass;
+    if (!owner.isAi) {
+      owner.kills += 1;
+      owner.xp += xpDroppedOnDeath(target.level, target.mass);
+    }
+  }
 }
 
 /**
@@ -88,6 +115,11 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
       case "orbital":
         tickOrbital(world, fish, slot, lvl, dmg, now);
         slot.cooldownReadyAt = now;
+        break;
+      case "flyby":
+        // Sets its own cooldownReadyAt when it summons a wave, so the HUD shows
+        // the real countdown to the next UFO — don't clobber it here.
+        tickFlyby(world, fish, slot, lvl, dmg, now, cdMult);
         break;
     }
   }
@@ -186,35 +218,66 @@ function tickBurstSweep(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponL
 
 function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, chain: boolean): void {
   const radius = lvl.pulseRadius ?? lvl.range;
+  pulseAt(world, fish.id, fish, fish.x, fish.y, radius, damage, slot.id, chain, lvl.maxTargets);
+}
 
-  // Damage every fish in range (self-damage prevented by id check) and collect the
-  // struck fish so the client can draw a lightning bolt to each one.
+/**
+ * Apply an instantaneous AoE at (x, y): damage every fish within `radius` (the
+ * owner is skipped), then emit one zap so the client can draw bolts/beams from
+ * `originId` to each struck fish. Shared by ESP/eel pulses (origin = the owner
+ * fish) and Alien Friends lasers (origin = the in-flight UFO projectile).
+ */
+function pulseAt(
+  world: World,
+  originId: number,
+  owner: Fish,
+  x: number,
+  y: number,
+  radius: number,
+  damage: number,
+  weaponId: WeaponId,
+  chain = false,
+  maxTargets?: number,
+): void {
   const scratch: Fish[] = [];
-  world.fishHash.query(fish.x, fish.y, radius + MAX_FISH_RADIUS_PAD, scratch);
-  const struck: { id: number; x: number; y: number }[] = [];
+  world.fishHash.query(x, y, radius + MAX_FISH_RADIUS_PAD, scratch);
+  const viewR2 = viewRadius(owner.mass) ** 2;
+  // Gather candidates with distance so we can take the nearest `maxTargets`
+  // (e.g. ESP caps to 1..5 fish per pulse depending on level).
+  const candidates: { target: Fish; d2: number }[] = [];
   for (const target of scratch) {
-    if (target.id === fish.id || !target.alive) continue;
-    const dx = target.x - fish.x;
-    const dy = target.y - fish.y;
+    if (target.id === owner.id || !target.alive) continue;
+    const dx = target.x - x;
+    const dy = target.y - y;
+    const d2 = dx * dx + dy * dy;
     const reach = radius + fishRadius(target.mass);
-    if (dx * dx + dy * dy > reach * reach) continue;
-    applyHit(world, target, fish, damage);
+    if (d2 > reach * reach) continue;
+    if (!withinOwnerView(owner, target.x, target.y, viewR2)) continue; // off-screen — not visible to the owner
+    candidates.push({ target, d2 });
+  }
+  if (maxTargets !== undefined && candidates.length > maxTargets) {
+    candidates.sort((a, b) => a.d2 - b.d2);
+    candidates.length = maxTargets;
+  }
+  const struck: { id: number; x: number; y: number }[] = [];
+  for (const { target } of candidates) {
+    applyHit(world, target, owner, damage, weaponId);
     struck.push({ id: target.id, x: target.x, y: target.y });
   }
 
-  // No fish hit → the pulse fires silently (no bolts).
+  // Nothing in range → fire silently (no bolts).
   if (struck.length === 0) return;
 
   // Chain weapons (eel) thread the struck fish into a single path via greedy
-  // nearest-neighbor from the origin; radial weapons (pulse) leave order arbitrary.
-  const ordered = chain ? orderChain(fish.x, fish.y, struck) : struck;
+  // nearest-neighbor from the origin; radial weapons (pulse/laser) leave order arbitrary.
+  const ordered = chain ? orderChain(x, y, struck) : struck;
   world.zapEvents.push({
     nodes: [
-      { id: fish.id, x: Math.round(fish.x), y: Math.round(fish.y) },
+      { id: originId, x: Math.round(x), y: Math.round(y) },
       ...ordered.map((t) => ({ id: t.id, x: Math.round(t.x), y: Math.round(t.y) })),
     ],
     chain,
-    weaponId: slot.id,
+    weaponId,
   });
 }
 
@@ -343,6 +406,105 @@ function ensureOrbitalState(slot: WeaponSlot): OrbitalState {
   return s;
 }
 
+/**
+ * Alien Friends: summon UFO(s) that fly a straight line across the player's view
+ * and pulse a laser AoE every `intervalMs`. Each ship is a zero-damage linear
+ * projectile (so it rides the normal projectile pipeline — integrated, snapshot,
+ * dead-reckoned client-side) that auto-expires after its flight time. A fresh
+ * wave summons when no ships remain and the cooldown has elapsed; each ship picks
+ * its own random heading and enters one view edge, crosses over the player, and
+ * exits the opposite edge.
+ */
+function tickFlyby(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number, cdMult: number): void {
+  const state = ensureFlybyState(slot);
+  // Drop ships whose projectile has expired/been removed.
+  state.ships = state.ships.filter((s) => world.projectiles.has(s.projId));
+
+  if (state.ships.length === 0 && now >= slot.cooldownReadyAt) {
+    const count = lvl.count ?? 1;
+    const lifetimeMs = lvl.lifetimeMs ?? 5000;
+    const lifeSec = lifetimeMs / 1000;
+    const shipRadius = lvl.radius ?? 24;
+    // Span the player's visible window: enter at one edge, exit the opposite.
+    const R = viewRadius(fish.mass);
+    const speed = (2 * R) / lifeSec;
+    for (let i = 0; i < count; i++) {
+      const angle = world.rng() * Math.PI * 2;
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+      const proj = world.spawnProjectile({
+        ownerId: fish.id,
+        weaponId: slot.id,
+        x: fish.x - dirX * R,
+        y: fish.y - dirY * R,
+        vx: dirX * speed,
+        vy: dirY * speed,
+        damage: 0, // the body deals no contact damage; the laser pulses do
+        radius: shipRadius,
+        expiresAt: now + lifetimeMs,
+        behavior: "linear",
+        reHitMs: 0,
+      });
+      if (proj.id >= 0) state.ships.push({ projId: proj.id, lastFireAt: now });
+    }
+    slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
+  }
+
+  // Each ship snipes one on-screen fish per interval with a laser beam.
+  const interval = lvl.intervalMs ?? 1000;
+  const viewR = viewRadius(fish.mass);
+  for (const ship of state.ships) {
+    const proj = world.projectiles.get(ship.projId);
+    if (!proj) continue;
+    if (now - ship.lastFireAt < interval) continue;
+    ship.lastFireAt = now;
+    fireLaser(world, fish, proj, viewR, damage, slot.id);
+  }
+}
+
+/**
+ * Alien Friends laser: pick the single fish nearest the UFO that's currently on
+ * the owner's screen (within their view radius), damage it, and emit a one-bolt
+ * zap so the client draws a beam from the UFO to it. Fires silently when the
+ * player has nothing visible to shoot.
+ */
+function fireLaser(world: World, owner: Fish, ship: Projectile, viewR: number, damage: number, weaponId: WeaponId): void {
+  const scratch: Fish[] = [];
+  // Candidates = everything on the owner's screen.
+  world.fishHash.query(owner.x, owner.y, viewR + MAX_FISH_RADIUS_PAD, scratch);
+  const viewR2 = viewR * viewR;
+  let best: Fish | null = null;
+  let bestD2 = Infinity;
+  for (const target of scratch) {
+    if (target.id === owner.id || !target.alive) continue;
+    if (!withinOwnerView(owner, target.x, target.y, viewR2)) continue; // off-screen — not visible to the owner
+    const dx = target.x - ship.x;
+    const dy = target.y - ship.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = target;
+    }
+  }
+  if (!best) return;
+  applyHit(world, best, owner, damage, weaponId);
+  world.zapEvents.push({
+    nodes: [
+      { id: ship.id, x: Math.round(ship.x), y: Math.round(ship.y) },
+      { id: best.id, x: Math.round(best.x), y: Math.round(best.y) },
+    ],
+    chain: false,
+    weaponId,
+  });
+}
+
+function ensureFlybyState(slot: WeaponSlot): FlybyState {
+  if (slot.state && slot.state.kind === "flyby") return slot.state;
+  const s: FlybyState = { kind: "flyby", ships: [] };
+  slot.state = s;
+  return s;
+}
+
 /** Called from world.step when owner dies: orphan orbital/trail projectiles so they clean up. */
 export function cleanupOwnerProjectiles(world: World, ownerId: number): void {
   for (const [id, proj] of world.projectiles) {
@@ -371,12 +533,14 @@ export function applyProjectileDamage(world: World, now: number): void {
 
     scratch.length = 0;
     world.fishHash.query(proj.x, proj.y, proj.radius + MAX_FISH_RADIUS_PAD, scratch);
+    const viewR2 = viewRadius(owner.mass) ** 2;
     for (const target of scratch) {
       if (target.id === proj.ownerId || !target.alive) continue;
       const dx = target.x - proj.x;
       const dy = target.y - proj.y;
       const reach = proj.radius + fishRadius(target.mass);
       if (dx * dx + dy * dy > reach * reach) continue;
+      if (!withinOwnerView(owner, target.x, target.y, viewR2)) continue; // off-screen — not visible to the owner
 
       // re-hit gate
       if (proj.reHitMs > 0) {
@@ -384,7 +548,7 @@ export function applyProjectileDamage(world: World, now: number): void {
         if (now - lastHit < proj.reHitMs) continue;
       }
       proj.hits.set(target.id, now);
-      applyHit(world, target, owner, proj.damage);
+      applyHit(world, target, owner, proj.damage, proj.weaponId);
 
       if (proj.behavior === "linear") {
         // expire after first hit

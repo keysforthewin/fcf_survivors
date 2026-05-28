@@ -40,6 +40,11 @@ export function getFishEatMass(baseGain: number, fish: Fish): number {
   return baseGain * effectMult(fish, "hungry");
 }
 
+/** Multiplier on the forward eating reach (Close Encounters). >1 lets you grab prey from farther. */
+export function getEatRangeMult(fish: Fish): number {
+  return effectMult(fish, "closeEncounters");
+}
+
 export function getWeaponDamageMult(fish: Fish): number {
   return effectMult(fish, "teeth");
 }

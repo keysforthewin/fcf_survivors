@@ -14,11 +14,15 @@ const BRANCH_CHANCE = 0.45;
 interface ColorSet {
   glow: number;
   core: number;
+  /** true → draw a straight laser beam instead of jagged lightning (Alien Friends). */
+  beam?: boolean;
 }
 
 const COLORS: Record<string, ColorSet> = {
   pulse: { glow: 0x7fcfff, core: 0xffffff },
   eel: { glow: 0xc89bff, core: 0xffffff },
+  alien: { glow: 0x66ff88, core: 0xffffff, beam: true },
+  overlord: { glow: 0x66ffff, core: 0xffffff, beam: true },
 };
 
 export interface Vec {
@@ -46,21 +50,24 @@ export class ZapEffect {
   private colors: ColorSet;
   private seeds: BoltSeed[] = [];
   private lastFlicker = -Infinity;
+  /** Laser beams linger a touch longer (and burn brighter) than lightning flickers. */
+  private lifetime: number;
 
   constructor(zap: ZapEvent, spawnTime: number) {
     this.spawnTime = spawnTime;
     this.nodes = zap.nodes;
     this.chain = zap.chain;
     this.colors = COLORS[zap.weaponId] ?? COLORS.pulse!;
+    this.lifetime = this.colors.beam ? 320 : LIFETIME_MS;
     this.container.addChild(this.g);
     const glow = new GlowFilter({
-      distance: 12,
-      outerStrength: 2.0,
-      innerStrength: 0.3,
+      distance: this.colors.beam ? 22 : 12,
+      outerStrength: this.colors.beam ? 3.0 : 2.0,
+      innerStrength: this.colors.beam ? 0.6 : 0.3,
       color: this.colors.glow,
       quality: 0.2,
     });
-    glow.padding = 16;
+    glow.padding = this.colors.beam ? 28 : 16;
     this.container.filters = [glow];
     this.regenSeeds();
   }
@@ -90,7 +97,7 @@ export class ZapEffect {
   }
 
   expired(now: number): boolean {
-    return now - this.spawnTime >= LIFETIME_MS;
+    return now - this.spawnTime >= this.lifetime;
   }
 
   /** Resolve the [from, to] endpoints for bolt index i to current positions. */
@@ -106,13 +113,12 @@ export class ZapEffect {
   }
 
   update(now: number, resolve: NodeResolver): void {
-    const age = Math.max(0, Math.min(1, (now - this.spawnTime) / LIFETIME_MS));
-    // Ease-out fade plus a per-frame flicker so the bolt shimmers as it dies.
+    const age = Math.max(0, Math.min(1, (now - this.spawnTime) / this.lifetime));
+    // Lightning shimmers as it dies; a laser beam holds bright then fades cleanly.
     const fade = (1 - age) * (1 - age);
-    const flicker = 0.7 + Math.random() * 0.3;
-    this.container.alpha = fade * flicker;
+    this.container.alpha = this.colors.beam ? Math.min(1, fade + 0.2) : fade * (0.7 + Math.random() * 0.3);
 
-    if (now - this.lastFlicker >= FLICKER_MS) {
+    if (!this.colors.beam && now - this.lastFlicker >= FLICKER_MS) {
       this.regenSeeds();
       this.lastFlicker = now;
     }
@@ -127,6 +133,12 @@ export class ZapEffect {
   }
 
   private drawBolt(g: Graphics, from: Vec, to: Vec, seed: BoltSeed): void {
+    // Laser weapons draw a clean straight beam; lightning weapons jag and fork.
+    if (this.colors.beam) {
+      this.strokePath(g, [from, to]);
+      return;
+    }
+
     const main = jaggedPath(from, to, seed.offs);
     this.strokePath(g, main);
 
@@ -149,13 +161,16 @@ export class ZapEffect {
     }
   }
 
-  /** Trace the path twice: a wide dim glow stroke, then a thin bright core. */
+  /** Trace the path: a wide dim glow halo, then a bright core. Beams run thicker. */
   private strokePath(g: Graphics, pts: Vec[], scale = 1): void {
     if (pts.length < 2) return;
+    const beam = this.colors.beam;
+    const glowW = (beam ? 16 : 6) * scale;
+    const coreW = (beam ? 5 : 2) * scale;
     trace(g, pts);
-    g.stroke({ color: this.colors.glow, width: 6 * scale, alpha: 0.3, cap: "round", join: "round" });
+    g.stroke({ color: this.colors.glow, width: glowW, alpha: beam ? 0.45 : 0.3, cap: "round", join: "round" });
     trace(g, pts);
-    g.stroke({ color: this.colors.core, width: 2 * scale, alpha: 0.95, cap: "round", join: "round" });
+    g.stroke({ color: this.colors.core, width: coreW, alpha: 0.95, cap: "round", join: "round" });
   }
 
   destroy(): void {

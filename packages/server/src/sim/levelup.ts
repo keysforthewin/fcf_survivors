@@ -88,6 +88,9 @@ function buildCardPool(fish: Fish): WeightedCard[] {
   if (hasFreeSlot) {
     for (const id of BASE_WEAPONS) {
       if (fish.weapons.some((s) => s.id === id)) continue;
+      // Owning the evolved form blocks the base — one form per weapon family.
+      const evoId = EVOLUTIONS[id]?.evolutionId;
+      if (evoId && fish.weapons.some((s) => s.id === evoId)) continue;
       if (banned(fish, cardSubject({ kind: "weapon-add", weaponId: id }))) continue;
       pool.push({ card: makeAddCard(id), weight: 3 });
     }
@@ -221,12 +224,44 @@ export function banishCard(world: World, fish: Fish, cardId: string): boolean {
 
   // If there was genuinely nothing to backfill, pull the next queued pick
   // (mirrors applyCard tail) so a banish never strands the player on an empty modal.
-  if (fish.pendingLevelUp.length === 0 && fish.queuedLevelUps > 0) {
-    fish.queuedLevelUps -= 1;
-    if (canOfferAnyCard(fish)) fish.pendingLevelUp = drawCards(fish, world.rng);
-  }
+  advanceQueueIfEmpty(world, fish);
   fish.pendingLevelUpDrawId += 1;
   return true;
+}
+
+/**
+ * When the active draw is empty but picks are still queued, pull the next one so
+ * the player is never stranded on an empty modal. Bumps the draw id when it draws.
+ */
+function advanceQueueIfEmpty(world: World, fish: Fish): void {
+  if (fish.pendingLevelUp.length > 0 || fish.queuedLevelUps <= 0) return;
+  fish.queuedLevelUps -= 1;
+  if (canOfferAnyCard(fish)) {
+    fish.pendingLevelUp = drawCards(fish, world.rng);
+    fish.pendingLevelUpDrawId += 1;
+  }
+}
+
+/**
+ * Drop pending cards the player can no longer act on — used after a discard frees
+ * a slot, so a dismissed modal isn't left holding cards referencing the gone
+ * weapon/passive. If pruning empties the draw, the next queued pick is pulled.
+ * No-op when there's no pending draw.
+ */
+export function prunePendingCards(
+  world: World,
+  fish: Fish,
+  drop: (parsed: ParsedCardId) => boolean,
+): void {
+  if (fish.pendingLevelUp.length === 0) return;
+  const before = fish.pendingLevelUp.length;
+  fish.pendingLevelUp = fish.pendingLevelUp.filter((c) => {
+    const p = parseCardId(c.id);
+    return !p || !drop(p);
+  });
+  if (fish.pendingLevelUp.length === before) return;
+  fish.pendingLevelUpDrawId += 1;
+  advanceQueueIfEmpty(world, fish);
 }
 
 function makeAddCard(id: WeaponId): LevelUpCard {
@@ -275,6 +310,9 @@ export function applyCard(world: World, fish: Fish, cardId: string, parsed: Pars
     case "weapon-add": {
       if (fish.weapons.length + fish.passives.size >= MAX_SLOTS) return false;
       if (fish.weapons.some((s) => s.id === parsed.weaponId)) return false;
+      // Reject re-adding a base over its already-owned evolved form.
+      const evoId = EVOLUTIONS[parsed.weaponId]?.evolutionId;
+      if (evoId && fish.weapons.some((s) => s.id === evoId)) return false;
       fish.weapons.push({ id: parsed.weaponId, level: 1, cooldownReadyAt: world.now() + 400 });
       break;
     }

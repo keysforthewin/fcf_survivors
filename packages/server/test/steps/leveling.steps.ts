@@ -2,8 +2,9 @@ import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
 import { TestWorld } from "../support/world.ts";
 import { tryFish } from "../support/world-factory.ts";
-import { applyCard, processLevelUps } from "../../src/sim/levelup.ts";
-import { parseCardId, xpForLevel } from "@fcf/shared";
+import { applyCard, processLevelUps, drawCards } from "../../src/sim/levelup.ts";
+import { parseCardId, serializeCardId, xpForLevel } from "@fcf/shared";
+import type { WeaponId } from "@fcf/shared";
 
 When("level-ups are processed", function (this: TestWorld) {
   processLevelUps(this.requireSim().world);
@@ -126,6 +127,24 @@ Then(
         .map((c) => c.id)
         .join(", ")}]`
     );
+  }
+);
+
+Then(
+  "{string} is never offered to add weapon {string}",
+  function (this: TestWorld, name: string, weaponId: string) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    if (!f) throw new Error(`No fish named ${name}`);
+    const addId = serializeCardId({ kind: "weapon-add", weaponId: weaponId as WeaponId });
+    // Draw many times against the seeded rng; a re-offered base would surface fast.
+    for (let i = 0; i < 80; i++) {
+      const cards = drawCards(f, sim.world.rng);
+      assert.ok(
+        !cards.some((c) => c.id === addId),
+        `draw #${i} offered ${addId}: [${cards.map((c) => c.id).join(", ")}]`
+      );
+    }
   }
 );
 

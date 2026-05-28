@@ -7,9 +7,9 @@ export interface WeaponSlot {
   /**
    * Per-weapon volatile state. Trail uses {lastDropAt}. Orbital uses
    * {phase, projectileIds}. Radial-burst (Turret) uses {startedAt, firedCount}
-   * while a ring is mid-sweep.
+   * while a ring is mid-sweep. Flyby (Alien Friends) tracks its in-flight ships.
    */
-  state?: TrailState | OrbitalState | BurstSweepState;
+  state?: TrailState | OrbitalState | BurstSweepState | FlybyState;
 }
 
 export interface TrailState {
@@ -36,8 +36,19 @@ export interface BurstSweepState {
   firedCount: number;
 }
 
+/**
+ * Tracks the UFOs a flyby weapon (Alien Friends) currently has crossing the
+ * screen. Each ship is a zero-damage linear projectile that auto-expires; the
+ * per-shot AoE laser is driven off `lastFireAt`. When `ships` empties and the
+ * cooldown has elapsed, a fresh wave is summoned.
+ */
+export interface FlybyState {
+  kind: "flyby";
+  ships: { projId: number; lastFireAt: number }[];
+}
+
 export type PassiveId =
-  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry";
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters";
 
 export interface Fish {
   id: EntityId;
@@ -102,6 +113,14 @@ export interface Fish {
    * future draw. Cleared only on (re)spawn — a "round" is one life.
    */
   banishedSubjects: Set<string>;
+  /**
+   * Set when a weapon lands the lethal hit (mass drained to zero), so the death
+   * handler can credit the shooter instead of the 250-unit proximity heuristic —
+   * which misses ranged kills (ESP/aliens). `undefined` ⇒ died by eating or the
+   * void. Set just before removal; never reset (fish are fresh objects per life).
+   */
+  killedByName?: string;
+  killedByMass?: number;
 }
 
 export interface AiState {
@@ -189,6 +208,8 @@ export interface HitEventRecord {
   damage: number;
   targetId: EntityId;
   ownerId: EntityId;
+  /** Weapon that landed the hit — lets the client pick or mute per-weapon hit sounds. */
+  weaponId: WeaponId;
 }
 
 /**

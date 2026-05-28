@@ -29,9 +29,15 @@ interface CountStats {
   value: number;
 }
 
+interface GaugeStats {
+  value: number;
+  unit: string;
+}
+
 class Perf {
   private phases = new Map<string, PhaseStats>();
   private counts = new Map<string, CountStats>();
+  private gauges = new Map<string, GaugeStats>();
   private frameTimes: number[] = new Array(WINDOW_FRAMES).fill(0);
   private frameIndex = 0;
   private frameFilled = 0;
@@ -90,6 +96,20 @@ class Perf {
     c.value = value;
   }
 
+  /**
+   * Set a named network/timing gauge (latest value + unit). Rendered in the overlay's
+   * "network" block in insertion order, so the first setGauge call per name fixes its row.
+   */
+  setGauge(name: string, value: number, unit = ""): void {
+    let g = this.gauges.get(name);
+    if (!g) {
+      g = { value: 0, unit };
+      this.gauges.set(name, g);
+    }
+    g.value = value;
+    g.unit = unit;
+  }
+
   frame(): void {
     const now = performance.now();
     const dt = now - this.lastFrameAt;
@@ -124,6 +144,7 @@ class Perf {
     frameMs: number;
     phases: Array<{ name: string; avgMs: number; lastMs: number }>;
     counts: Array<{ name: string; value: number }>;
+    gauges: Array<{ name: string; value: number; unit: string }>;
   } {
     const frameMs = avg(this.frameTimes, this.frameFilled);
     return {
@@ -133,6 +154,8 @@ class Perf {
         .map(([name, s]) => ({ name, avgMs: avg(s.samples, s.filled), lastMs: s.lastMs }))
         .sort((a, b) => b.avgMs - a.avgMs),
       counts: Array.from(this.counts.entries()).map(([name, c]) => ({ name, value: c.value })),
+      // Insertion order (no sort) so the network rows stay in their designed order.
+      gauges: Array.from(this.gauges.entries()).map(([name, g]) => ({ name, value: g.value, unit: g.unit })),
     };
   }
 
@@ -174,6 +197,15 @@ class Perf {
     lines.push("─ entities ────────────────────────");
     for (const c of snap.counts) {
       lines.push(`${c.name.padEnd(14)} ${String(c.value).padStart(5)}`);
+    }
+    if (snap.gauges.length > 0) {
+      lines.push("─ network ─────────────────────────");
+      for (const g of snap.gauges) {
+        // "#" / "B/s" gauges read as integers; ms/offset gauges keep one decimal.
+        const intLike = g.unit === "#" || g.unit === "B/s";
+        const val = intLike ? String(Math.round(g.value)) : g.value.toFixed(1);
+        lines.push(`${g.name.padEnd(14)} ${val.padStart(7)} ${g.unit}`);
+      }
     }
     lines.push("");
     lines.push("F3 to toggle · __perfLog() in console");

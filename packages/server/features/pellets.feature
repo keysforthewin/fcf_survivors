@@ -12,7 +12,7 @@ Feature: Pellet population maintenance
   Scenario: Pellet count is capped at the target
     Given a world with pellet auto-spawn enabled
     When the world advances 200 ticks
-    Then there are 600 pellets
+    Then there are 150 pellets
 
   Scenario: No pellets spawn while no human is connected
     Given a world with pellet auto-spawn enabled but no humans connected

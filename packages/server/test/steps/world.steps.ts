@@ -344,6 +344,16 @@ Then(
 );
 
 Then(
+  "the latest hit was from weapon {string}",
+  function (this: TestWorld, weaponId: string) {
+    const events = this.requireSim().world.hitEvents;
+    const last = events[events.length - 1];
+    assert.ok(last, "expected a hit event");
+    assert.equal(last.weaponId, weaponId, `expected hit weapon ${weaponId}, got ${last.weaponId}`);
+  }
+);
+
+Then(
   "{string} has dealt at least {float} damage",
   function (this: TestWorld, name: string, expected: number) {
     const f = tryFish(this.requireSim(), name);

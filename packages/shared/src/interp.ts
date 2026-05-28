@@ -69,3 +69,24 @@ export function sampleAt(
   const vy = (b.y - a.y) / (span / 1000);
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, vx, vy };
 }
+
+/**
+ * Dead-reckon a constant-velocity position `aheadMs` past a baseline `(x, y)` moving at `(vx, vy)`
+ * world px/s, with `aheadMs` clamped to `[0, maxAheadMs]`.
+ *
+ * Used for client-side projectile rendering: linear projectiles move at constant velocity on the
+ * server (no drag/gravity), so extrapolating the latest authoritative sample to the present frame
+ * reproduces the server path exactly and re-anchoring on the next snapshot is seamless. The clamp
+ * keeps a stale baseline (dropped packet) or negative `aheadMs` (clock skew) from overshooting.
+ */
+export function deadReckon(
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  aheadMs: number,
+  maxAheadMs: number,
+): { x: number; y: number } {
+  const dt = Math.max(0, Math.min(aheadMs, maxAheadMs)) / 1000;
+  return { x: x + vx * dt, y: y + vy * dt };
+}

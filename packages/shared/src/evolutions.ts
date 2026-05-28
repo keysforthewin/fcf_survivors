@@ -12,15 +12,16 @@ export interface EvolutionDef {
 
 /** Map: base weapon id → evolution requirements + result. */
 export const EVOLUTIONS: Record<string, EvolutionDef> = {
-  bubble:  { base: "bubble",  passive: "magnet",   evolutionId: "tidal"  },
-  spine:   { base: "spine",   passive: "scales",   evolutionId: "puffer" },
-  pulse:   { base: "pulse",   passive: "reflex",   evolutionId: "eel"    },
-  ink:     { base: "ink",     passive: "teeth",    evolutionId: "kraken" },
-  piranha: { base: "piranha", passive: "hungry",   evolutionId: "school" },
+  bubble:  { base: "bubble",  passive: "magnet",          evolutionId: "tidal"    },
+  spine:   { base: "spine",   passive: "scales",          evolutionId: "puffer"   },
+  pulse:   { base: "pulse",   passive: "reflex",          evolutionId: "eel"      },
+  ink:     { base: "ink",     passive: "teeth",           evolutionId: "kraken"   },
+  piranha: { base: "piranha", passive: "hungry",          evolutionId: "school"   },
+  alien:   { base: "alien",   passive: "closeEncounters", evolutionId: "overlord" },
 };
 
-export const BASE_WEAPONS: WeaponId[] = ["bubble", "spine", "pulse", "ink", "piranha"];
-export const EVOLUTION_WEAPONS: WeaponId[] = ["tidal", "puffer", "eel", "kraken", "school"];
+export const BASE_WEAPONS: WeaponId[] = ["bubble", "spine", "pulse", "ink", "piranha", "alien"];
+export const EVOLUTION_WEAPONS: WeaponId[] = ["tidal", "puffer", "eel", "kraken", "school", "overlord"];
 
 export function isEvolutionWeapon(id: WeaponId): boolean {
   return EVOLUTION_WEAPONS.includes(id);

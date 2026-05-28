@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sampleAt } from "./interp.js";
+import { sampleAt, deadReckon } from "./interp.js";
 
 describe("sampleAt", () => {
   test("empty buffer returns null", () => {
@@ -86,5 +86,26 @@ describe("sampleAt", () => {
     const mid = sampleAt([{ t: 50, x: 10, y: 0 }, { t: 50, x: 20, y: 0 }], 50, 100)!;
     expect(Number.isFinite(mid.x)).toBe(true);
     expect(Number.isFinite(mid.vx)).toBe(true);
+  });
+});
+
+describe("deadReckon", () => {
+  test("zero velocity holds the baseline position", () => {
+    expect(deadReckon(5, 7, 0, 0, 100, 250)).toEqual({ x: 5, y: 7 });
+  });
+
+  test("extrapolates along velocity under the cap", () => {
+    const r = deadReckon(0, 0, 1000, -500, 50, 250); // 50ms at (1000,-500) px/s
+    expect(r.x).toBeCloseTo(50, 9);
+    expect(r.y).toBeCloseTo(-25, 9);
+  });
+
+  test("clamps aheadMs at maxAheadMs", () => {
+    const r = deadReckon(0, 0, 1000, 0, 400, 250); // 400ms requested, capped to 250ms
+    expect(r.x).toBeCloseTo(250, 9); // NOT 400
+  });
+
+  test("clamps negative aheadMs to zero (clock skew safety)", () => {
+    expect(deadReckon(10, 10, 1000, 1000, -30, 250)).toEqual({ x: 10, y: 10 });
   });
 });

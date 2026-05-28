@@ -36,6 +36,15 @@ Then("the zap is not a chain", function (this: TestWorld) {
   assert.ok(!z.chain, "expected a radial (non-chain) zap");
 });
 
+Then("the zap strikes {string}", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const z = latestZap(sim.world);
+  assert.ok(z, "expected a zap event");
+  const struck = new Set(z.nodes.slice(1).map((n) => n.id));
+  assert.equal(struck.size, 1, `expected 1 struck fish, got ${struck.size}`);
+  assert.ok(struck.has(getFish(sim, name).id), `${name} should be struck`);
+});
+
 Then("the zap strikes {string} and {string}", function (this: TestWorld, a: string, b: string) {
   const sim = this.requireSim();
   const z = latestZap(sim.world);

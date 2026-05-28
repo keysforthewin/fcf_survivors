@@ -153,6 +153,7 @@ function humanEffect(effect: string): string {
     case "pickupMult": return "Pickup radius";
     case "boostCdMult": return "Boost cooldown";
     case "fishEatMassMult": return "Mass per fish eaten";
+    case "fishEatRangeMult": return "Eating range";
     default: return effect;
   }
 }

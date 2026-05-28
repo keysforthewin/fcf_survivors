@@ -4,40 +4,45 @@ export type WeaponId =
   | "pulse"
   | "ink"
   | "piranha"
+  | "alien"
   | "tidal"
   | "puffer"
   | "eel"
   | "kraken"
-  | "school";
+  | "school"
+  | "overlord";
 
 export type WeaponKind =
   | "projectile"     // linear projectile, dies on first hit
   | "radial-burst"   // N projectiles radial, each dies on first hit
   | "radial-pulse"   // instantaneous AoE around owner; spawns short vis-only static blob
   | "trail"          // drops a static damaging zone behind owner periodically
-  | "orbital";       // N projectiles orbiting owner, persistent
+  | "orbital"        // N projectiles orbiting owner, persistent
+  | "flyby";         // N summoned ships cross the screen, pulsing AoE lasers along the way
 
 export interface WeaponLevel {
   damage: number;
   cooldownMs: number;
   /** Linear/burst: number of projectiles per fire. Orbital: number of orbiting projectiles. */
   count?: number;
-  /** Linear: muzzle distance / spread arc. Pulse: AoE radius. Trail: drop radius. Orbital: orbit radius. */
+  /** Linear: muzzle distance / spread arc. Pulse: AoE radius. Trail: drop radius. Orbital: orbit radius. Flyby: laser AoE radius. */
   range: number;
   /** Linear projectile speed (units/sec). */
   speed?: number;
-  /** Linear/static lifetime in ms. */
+  /** Linear/static lifetime in ms. Flyby: ship flight time. */
   lifetimeMs?: number;
-  /** Visual + collision radius of an individual projectile / drop / piranha. */
+  /** Visual + collision radius of an individual projectile / drop / piranha. Flyby: ship entity radius (client uses a fixed sprite size). */
   radius?: number;
   /** Pulse AoE radius (overrides range for collision in pulse). */
   pulseRadius?: number;
-  /** Trail: ms between drops. Orbital: angular speed (rad/sec). */
+  /** Trail: ms between drops. Orbital: angular speed (rad/sec). Flyby: ms between laser shots. */
   intervalMs?: number;
   /** Per-target re-hit cooldown ms (orbital/trail/pulse). Defaults: orbital 500, trail 350. */
   reHitMs?: number;
   /** Spread arc (rad) for projectile/burst patterns with count > 1. */
   spread?: number;
+  /** radial-pulse only: cap on fish struck per pulse (nearest first). Undefined = unlimited. */
+  maxTargets?: number;
 }
 
 export interface WeaponDef {
@@ -90,11 +95,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     description: "Unleashes a psychic shockwave around you.",
     kind: "radial-pulse",
     levels: [
-      { damage: 1, cooldownMs: 5000, range: 250, pulseRadius: 250, lifetimeMs: 220, radius: 250 },
-      { damage: 3, cooldownMs: 4800, range: 280, pulseRadius: 280, lifetimeMs: 220, radius: 280 },
-      { damage: 5, cooldownMs: 4600, range: 310, pulseRadius: 310, lifetimeMs: 240, radius: 310 },
-      { damage: 7, cooldownMs: 4400, range: 340, pulseRadius: 340, lifetimeMs: 260, radius: 340 },
-      { damage: 9, cooldownMs: 4200, range: 380, pulseRadius: 380, lifetimeMs: 280, radius: 380 },
+      // range/pulseRadius are the gameplay AoE (firePulse reads pulseRadius); ~10x
+      // the old reach. `radius` is left small — it only feeds the HUD + the
+      // MAX_PROJECTILE_RADIUS snapshot pad, and ESP draws as lightning to struck
+      // fish (no fixed-radius blob), so the visual already scales with the reach.
+      { damage: 1, cooldownMs: 5000, range: 2500, pulseRadius: 2500, lifetimeMs: 220, radius: 250, maxTargets: 1 },
+      { damage: 3, cooldownMs: 4800, range: 2800, pulseRadius: 2800, lifetimeMs: 220, radius: 280, maxTargets: 2 },
+      { damage: 5, cooldownMs: 4600, range: 3100, pulseRadius: 3100, lifetimeMs: 240, radius: 310, maxTargets: 3 },
+      { damage: 7, cooldownMs: 4400, range: 3400, pulseRadius: 3400, lifetimeMs: 260, radius: 340, maxTargets: 4 },
+      { damage: 9, cooldownMs: 4200, range: 3800, pulseRadius: 3800, lifetimeMs: 280, radius: 380, maxTargets: 5 },
     ],
   },
   ink: {
@@ -116,11 +125,29 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     description: "Two toxic tuna orbit you and bite passers-by.",
     kind: "orbital",
     levels: [
-      { damage: 1,  cooldownMs: 0, count: 2, range: 120, intervalMs: 3.0, radius: 28, reHitMs: 500 },
-      { damage: 4,  cooldownMs: 0, count: 2, range: 140, intervalMs: 3.2, radius: 30, reHitMs: 480 },
-      { damage: 7,  cooldownMs: 0, count: 3, range: 150, intervalMs: 3.4, radius: 30, reHitMs: 460 },
-      { damage: 10, cooldownMs: 0, count: 3, range: 160, intervalMs: 3.6, radius: 32, reHitMs: 440 },
-      { damage: 13, cooldownMs: 0, count: 4, range: 180, intervalMs: 3.8, radius: 32, reHitMs: 420 },
+      // `range` is the orbit-path radius (~2x the old 120–180 so the tuna ride
+      // clearly off the body instead of grazing it).
+      { damage: 1,  cooldownMs: 0, count: 2, range: 240, intervalMs: 3.0, radius: 28, reHitMs: 500 },
+      { damage: 4,  cooldownMs: 0, count: 2, range: 280, intervalMs: 3.2, radius: 30, reHitMs: 480 },
+      { damage: 7,  cooldownMs: 0, count: 3, range: 300, intervalMs: 3.4, radius: 30, reHitMs: 460 },
+      { damage: 10, cooldownMs: 0, count: 3, range: 320, intervalMs: 3.6, radius: 32, reHitMs: 440 },
+      { damage: 13, cooldownMs: 0, count: 4, range: 360, intervalMs: 3.8, radius: 32, reHitMs: 420 },
+    ],
+  },
+  alien: {
+    id: "alien",
+    name: "Alien Friends",
+    description: "A friendly UFO flies across and snipes one on-screen fish with a laser each second. Each level shortens the wait.",
+    kind: "flyby",
+    levels: [
+      // intervalMs = ms/shot, lifetimeMs = flight time, count = ships. `range` is HUD-only;
+      // the laser targets any fish on the player's screen (viewRadius), one per shot.
+      // Only cooldownMs changes per level (−10% each); everything else stays flat.
+      { damage: 3, cooldownMs: 10000, count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 3, cooldownMs: 9000,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 3, cooldownMs: 8100,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 3, cooldownMs: 7290,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 3, cooldownMs: 6561,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
     ],
   },
   // Evolutions — defined here so the dispatcher and renderer can branch on them.
@@ -178,6 +205,18 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
       { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
       { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+    ],
+  },
+  overlord: {
+    id: "overlord", name: "Alien Overlord", description: "Three UFOs on their own paths, each sniping an on-screen fish with a laser twice a second.",
+    kind: "flyby", evolutionOf: "alien",
+    levels: [
+      // 3 ships, each fires every 0.5s. `range` is HUD-only — targeting is screen-wide.
+      { damage: 10, cooldownMs: 10000, count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 10, cooldownMs: 9000,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 10, cooldownMs: 8100,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 10, cooldownMs: 7290,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 10, cooldownMs: 6561,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
     ],
   },
 };

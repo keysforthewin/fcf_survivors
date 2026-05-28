@@ -1,10 +1,10 @@
-import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, centerBiasedUnit, clampToArena, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, stepFishMovement, xpDroppedOnDeath } from "@fcf/shared";
+import { AI, ARENA, FISH, FRUIT, MOUTH, PELLET, TICK, boostDurationMs, canEat, centerGaussianPoint, clampToArena, fishRadius, massCapFor, massDecayPerSec, rotateHeadingToward, stepFishMovement, xpDroppedOnDeath } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
 import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEventRecord, ZapEventRecord } from "./entity.ts";
 import { SpatialHash } from "./spatial.ts";
 import { maintainAiPopulation, pickAiName, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage } from "./weapon.ts";
-import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass } from "./passives.ts";
+import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass, getEatRangeMult } from "./passives.ts";
 
 const MAX_PROJECTILES = 400;
 
@@ -242,11 +242,12 @@ export class World {
   }
 
   spawnPellet(): Pellet {
+    const { x, y } = centerGaussianPoint(this.rng, PELLET.centerSpread);
     const p: Pellet = {
       id: this.nextId(),
       kind: "pellet",
-      x: centerBiasedUnit(this.rng(), PELLET.centerBias) * ARENA.width,
-      y: centerBiasedUnit(this.rng(), PELLET.centerBias) * ARENA.height,
+      x,
+      y,
       color: PELLET_PALETTE[Math.floor(this.rng() * PELLET_PALETTE.length)]!,
     };
     this.pellets.set(p.id, p);
@@ -459,7 +460,12 @@ export class World {
     for (const a of fishList) {
       if (!a.alive) continue;
       const rA = fishRadius(a.mass);
-      const reach = rA + MOUTH.suctionExtraRadius + 80;
+      // Close Encounters pushes the mouth point farther forward and widens the
+      // bite zone, so you can vacuum prey from farther in front. `grab` is 0
+      // without the passive (and for AI, who carry none), leaving base eating
+      // byte-identical; the front-cone gate is untouched, so it stays directional.
+      const grab = MOUTH.reachBonus * ((a.isAi ? 1 : getEatRangeMult(a)) - 1);
+      const reach = rA + MOUTH.suctionExtraRadius + 80 + grab * 2;
       scratch.length = 0;
       this.fishHash.query(a.x, a.y, reach, scratch);
       const headingMag = Math.hypot(a.headingX, a.headingY);
@@ -484,12 +490,13 @@ export class World {
         // Effective bite radius extends rA + suctionExtraRadius from that point.
         // No suction from outside the bite zone — small fish must actually enter
         // the danger area before the giant can vacuum them up.
-        const mx = stationary ? a.x : a.x + hx * (rA + MOUTH.suctionExtraRadius * 0.5);
-        const my = stationary ? a.y : a.y + hy * (rA + MOUTH.suctionExtraRadius * 0.5);
+        const mouthOffset = rA + MOUTH.suctionExtraRadius * 0.5 + grab;
+        const mx = stationary ? a.x : a.x + hx * mouthOffset;
+        const my = stationary ? a.y : a.y + hy * mouthOffset;
         const mdx = b.x - mx;
         const mdy = b.y - my;
         const mouthDist2 = mdx * mdx + mdy * mdy;
-        const bite = rA + MOUTH.suctionExtraRadius;
+        const bite = rA + MOUTH.suctionExtraRadius + grab;
         if (mouthDist2 > bite * bite) continue;
 
         // Within mouth — confirm prey has actually penetrated past 50% rB into
@@ -527,7 +534,13 @@ export class World {
       // this tick's eating/growth too (eating ran earlier in the step).
       if (f.mass > f.peakMass) f.peakMass = f.mass;
       if (f.isAi) continue;
-      f.mass = Math.max(FISH.startMass, f.mass - massDecayPerSec(f.mass) * dtSec);
+      // Natural decay must never heal. A fish weapons have drained below spawn
+      // mass stays there — applying the Math.max(startMass, …) floor would snap it
+      // back up to startMass each tick and undo the damage. It recovers only by
+      // eating (pellets/chunks/fish above).
+      if (f.mass > FISH.startMass) {
+        f.mass = Math.max(FISH.startMass, f.mass - massDecayPerSec(f.mass) * dtSec);
+      }
     }
   }
 }

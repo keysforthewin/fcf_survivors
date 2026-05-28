@@ -143,15 +143,18 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     }, 15_000);
   }
 
-  // game loop
-  let lastTickAt = performance.now();
+  // game loop — fixed timestep. The sim integrates at exactly the cadence the client
+  // predicts against (PREDICT_STEP_S = TICK.ms). A variable wall-clock dt made
+  // stepFishMovement (explicitly NOT substep-invariant) disagree with the client every
+  // tick, which surfaced as the fish visibly speeding up / slowing down. Under sustained
+  // overload a fixed dt dilates game-time rather than teleporting the fish forward —
+  // watch the `server tick` gauge in the F3 panel to spot an over-budget tick.
+  const FIXED_DT = TICK.ms / 1000;
   const tickInterval = setInterval(() => {
-    const now = performance.now();
-    const dt = Math.min(0.1, (now - lastTickAt) / 1000);
-    lastTickAt = now;
+    const tickStart = performance.now();
     const wallNow = world.now();
 
-    world.step(dt, wallNow);
+    world.step(FIXED_DT, wallNow);
 
     // collect dead fish (snapshot stats BEFORE removal)
     interface DeadPlayer {
@@ -186,14 +189,20 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
         const isDisconnect = playerSessions.get(f.id)?.disconnected ?? false;
         let killer: { name: string; mass: number } | null = null;
         if (!isDisconnect) {
-          let bestMass = 0;
-          for (const other of world.fish.values()) {
-            if (other.id === f.id || !other.alive) continue;
-            const dx = other.x - f.x;
-            const dy = other.y - f.y;
-            if (dx * dx + dy * dy <= 250 * 250 && other.mass > bestMass) {
-              bestMass = other.mass;
-              killer = { name: other.name, mass: other.mass };
+          if (f.killedByName !== undefined) {
+            // Killed by a weapon — credit the recorded shooter. The proximity
+            // search below misses ranged kills (10x ESP, screen-wide aliens).
+            killer = { name: f.killedByName, mass: f.killedByMass ?? 0 };
+          } else {
+            let bestMass = 0;
+            for (const other of world.fish.values()) {
+              if (other.id === f.id || !other.alive) continue;
+              const dx = other.x - f.x;
+              const dy = other.y - f.y;
+              if (dx * dx + dy * dy <= 250 * 250 && other.mass > bestMass) {
+                bestMass = other.mass;
+                killer = { name: other.name, mass: other.mass };
+              }
             }
           }
         }
@@ -332,16 +341,21 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // buildSnapshot see fresh, correct entities rather than the stale mid-step hash.
     world.rebuildSpatialHashes();
 
+    // Wall-clock cost of this tick's sim body (everything above — step + dead-fish +
+    // level-ups + hash rebuild — excluding the broadcast below). Shipped to clients via
+    // SnapshotMsg.serverTickMs for the F3 network panel.
+    const tickMs = performance.now() - tickStart;
+
     // send snapshots
     for (const ws of sockets.values()) {
       const fid = ws.data.fishId;
       if (fid !== null) {
         const fish = world.fish.get(fid);
         if (!fish) continue;
-        const snap = buildSnapshot(world, fish, ws.data.view, wallNow);
+        const snap = buildSnapshot(world, fish, ws.data.view, wallNow, tickMs);
         send(ws, snap);
       } else if (ws.data.isSpectator) {
-        const snap = buildSpectatorSnapshot(world, ws.data.view, wallNow);
+        const snap = buildSpectatorSnapshot(world, ws.data.view, wallNow, tickMs);
         send(ws, snap);
       }
     }
@@ -471,7 +485,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           if (fid === null) return;
           const fish = world.fish.get(fid);
           if (!fish) return;
-          discardPassive(fish, msg.passiveId);
+          discardPassive(world, fish, msg.passiveId);
         } else if (msg.t === "setLevelUpDismissed") {
           const fid = ws.data.fishId;
           if (fid === null) return;

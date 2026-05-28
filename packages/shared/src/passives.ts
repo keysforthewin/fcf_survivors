@@ -1,5 +1,5 @@
 export type PassiveId =
-  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry";
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters";
 
 export type PassiveEffect =
   | "moveSpeedMult"
@@ -9,7 +9,8 @@ export type PassiveEffect =
   | "weaponCdMult"
   | "pickupMult"
   | "boostCdMult"
-  | "fishEatMassMult";
+  | "fishEatMassMult"
+  | "fishEatRangeMult";
 
 export interface PassiveDef {
   id: PassiveId;
@@ -54,9 +55,13 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
     id: "hungry",   name: "Pumpkin Farm",    description: "+5% mass per fish eaten per stack.",
     maxStack: 4, perStack: 1.05, effect: "fishEatMassMult",
   },
+  closeEncounters: {
+    id: "closeEncounters", name: "Close Encounters", description: "+20% eating range in front of you per stack.",
+    maxStack: 5, perStack: 1.20, effect: "fishEatRangeMult",
+  },
 };
 
-export const PASSIVE_IDS: PassiveId[] = ["fin", "gulp", "scales", "teeth", "reflex", "magnet", "recovery", "hungry"];
+export const PASSIVE_IDS: PassiveId[] = ["fin", "gulp", "scales", "teeth", "reflex", "magnet", "recovery", "hungry", "closeEncounters"];
 
 /** Multiply base by passive's per-stack factor `stack` times. Stack 0 = 1.0. */
 export function stackedMult(perStack: number, stack: number): number {

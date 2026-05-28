@@ -53,7 +53,7 @@ function projectileDelta(proj: Projectile, prev: unknown): EntityDelta {
   return delta;
 }
 
-export function buildSnapshot(world: World, self: Fish, view: ClientView, now: number): SnapshotMsg {
+export function buildSnapshot(world: World, self: Fish, view: ClientView, now: number, serverTickMs = 0): SnapshotMsg {
   const r = viewRadius(self.mass);
   const r2 = r * r;
   const seen = new Set<number>();
@@ -167,6 +167,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     tick: world.tick,
     ackSeq: view.ackSeq,
     serverNow: now,
+    serverTickMs,
     you: {
       x: self.x,
       y: self.y,
@@ -212,6 +213,7 @@ function hitEventsFor(world: World, self: Fish | null, seen: Set<number>): HitEv
       damage: Math.round(e.damage),
       targetId: e.targetId,
       byOwner: self !== null && e.ownerId === self.id,
+      weaponId: e.weaponId,
     });
   }
   return out;
@@ -238,7 +240,7 @@ function zapsFor(world: World, self: Fish | null, seen: Set<number>): ZapEvent[]
  * Build a snapshot for a spectator socket — no local fish, sees the whole map.
  * Camera position is sent up by the client but doesn't restrict what's visible.
  */
-export function buildSpectatorSnapshot(world: World, view: ClientView, now: number): SnapshotMsg {
+export function buildSpectatorSnapshot(world: World, view: ClientView, now: number, serverTickMs = 0): SnapshotMsg {
   const seen = new Set<number>();
   const entities: EntityDelta[] = [];
 
@@ -303,6 +305,7 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     tick: world.tick,
     ackSeq: view.ackSeq,
     serverNow: now,
+    serverTickMs,
     spectator: true,
     entities,
     removed,

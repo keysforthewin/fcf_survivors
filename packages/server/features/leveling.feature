@@ -114,3 +114,18 @@ Feature: XP and level progression
     Then "Alpha" is offered an evolution for "bubble"
     And "Alpha" is offered an evolution for "spine"
     And "Alpha" is offered no duplicate cards
+
+  Scenario: Alien Friends maxed with Close Encounters offers Alien Overlord
+    Given a player "Alpha" at (1000, 1000) with mass 10
+    And "Alpha" has weapon "alien" at level 5
+    And "Alpha" has passive "closeEncounters" at stack 5
+    And "Alpha" has accumulated 10 XP
+    When level-ups are processed
+    Then "Alpha" is offered an evolution for "alien"
+
+  Scenario: An evolved weapon's base form is never re-offered
+    # Owning the evolved "tidal" must block its base "bubble" from the add pool —
+    # you can only ever hold one form of a weapon family.
+    Given a player "Alpha" at (1000, 1000) with mass 10
+    And "Alpha" has weapon "tidal" at level 1
+    Then "Alpha" is never offered to add weapon "bubble"

@@ -30,6 +30,8 @@ export class NetSocket {
   private handlers: { [K in ServerMsg["t"]]?: Handler<Extract<ServerMsg, { t: K }>> } = {};
   private openHandlers: Array<() => void> = [];
   private closeHandlers: Array<() => void> = [];
+  /** Optional raw-message tap for bandwidth accounting: char length of the frame + message type. */
+  onRawMessage: ((byteLen: number, t: string) => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -58,6 +60,7 @@ export class NetSocket {
         } catch {
           return;
         }
+        this.onRawMessage?.(evt.data.length, parsed.t);
         const h = this.handlers[parsed.t] as Handler<ServerMsg> | undefined;
         if (h) h(parsed);
       });

@@ -25,18 +25,16 @@ export const FISH = {
 
 export const PELLET = {
   massGain: 1,
-  targetCount: 600,
+  targetCount: 150,
   spawnPerTick: 4,
   radius: 6,
   /**
-   * Spawn-distribution exponent biasing pellets toward the arena center.
-   * 1 = uniform; higher concentrates density centrally while edges still get
-   * pellets (edge density scales as ~1/centerBias). At 4 the pull is strong —
-   * a dense core with sparse outer arena and corners. AI fish no longer strip
-   * the middle while the server is idle (grazing pauses with no humans), so
-   * this bias is mostly felt during active play.
+   * Std-dev of the isotropic 2D Gaussian that places pellets, as a fraction of
+   * the arena's smaller side (see centerGaussianPoint). Smaller = tighter, denser
+   * core; larger = more reach toward the edges. At 0.2 the bulk sits in a central
+   * circle (~86% within half the arena radius) and thins out near the walls.
    */
-  centerBias: 4,
+  centerSpread: 0.2,
 } as const;
 
 /**
@@ -137,6 +135,9 @@ export const MOUTH = {
   suctionExtraRadius: 6,
   suctionPullPerTick: 0.45,
   stationaryHeadingEps: 0.05,
+  // Extra grab/suction distance beyond the body before a fish can vacuum prey in.
+  // Scaled by the Close Encounters passive (getEatRangeMult).
+  reachBonus: 80,
 } as const;
 
 export function fishRadius(mass: number): number {
@@ -184,13 +185,41 @@ export function xpForLevel(level: number): number {
 }
 
 /**
- * Map a uniform sample u in [0,1) to a [0,1) coordinate biased toward the
- * center (0.5). bias=1 is uniform; higher pushes density toward 0.5 while still
- * reaching both edges. Apply per-axis to spread spawns over a rectangle.
+ * Sample a pellet spawn point as an isotropic 2D Gaussian centered on the arena:
+ * a dense circular core fading smoothly to sparse edges and (sparsest) corners.
+ *
+ * Biasing each axis independently with a power law produces a "crosshair" —
+ * density piles up along the central rows and columns — because that product
+ * isn't radially symmetric. A Gaussian is the one product distribution that IS
+ * circular: exp(-x²/2σ²)·exp(-y²/2σ²) depends only on x²+y², so its contours are
+ * circles. This matches where fish actually roam (out from the middle).
+ *
+ * `spread` is the standard deviation as a fraction of the arena's smaller side
+ * (≈0.2 keeps ~96% of pellets inside the inscribed circle). Out-of-bounds draws
+ * are rejected and re-rolled so density never piles up on the walls; after a few
+ * misses we clamp the last sample (vanishingly rare at the default spread).
  */
-export function centerBiasedUnit(u: number, bias: number): number {
-  const d = u - 0.5;
-  return 0.5 + Math.sign(d) * Math.pow(Math.abs(2 * d), bias) / 2;
+export function centerGaussianPoint(rng: () => number, spread: number): { x: number; y: number } {
+  const sigma = spread * Math.min(ARENA.width, ARENA.height);
+  const cx = ARENA.width / 2;
+  const cy = ARENA.height / 2;
+  let x = cx;
+  let y = cy;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    // Box-Muller: two uniforms → one circularly-symmetric (x, y) sample
+    // (Rayleigh-distributed radius, uniform angle).
+    const u1 = Math.max(rng(), 1e-12); // guard against log(0)
+    const u2 = rng();
+    const mag = sigma * Math.sqrt(-2 * Math.log(u1));
+    const ang = 2 * Math.PI * u2;
+    x = cx + mag * Math.cos(ang);
+    y = cy + mag * Math.sin(ang);
+    if (x >= 0 && x <= ARENA.width && y >= 0 && y <= ARENA.height) break;
+  }
+  return {
+    x: Math.min(ARENA.width, Math.max(0, x)),
+    y: Math.min(ARENA.height, Math.max(0, y)),
+  };
 }
 
 /** XP awarded to the killer when their victim dies. Higher-level victims drop more. */

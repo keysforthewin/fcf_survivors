@@ -2,13 +2,14 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, FISH, MOUTH, TICK, MAX_SLOTS, fishRadius, stepFishMovement, sampleAt, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import { ARENA, FISH, MOUTH, TICK, MAX_SLOTS, fishRadius, stepFishMovement, sampleAt, deadReckon, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
 import { createInput } from "../input.ts";
 import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
+import { SaucerSprite } from "../render/saucer.ts";
 import { InkBlob } from "../render/ink.ts";
 import { ZapEffect } from "../render/lightning.ts";
 import { ParticleSystem } from "../render/particles.ts";
@@ -62,23 +63,55 @@ interface ChunkState {
 
 interface ProjectileState {
   id: number;
-  /** Server-time-stamped position buffer, sampled at renderTime each frame (R2). */
-  samples: TimedSample[];
-  /** First-seen launch velocity — orientation fallback when derived velocity is ~0 (spawn). */
+  /**
+   * "linear" → client-side dead-reckoning from the latest authoritative anchor (bullets move at
+   * constant velocity server-side). "orbital" → anchored to the owner's rendered position each
+   * frame (tuna/piranha circle the owner; not constant-velocity). Picked at first-seen from
+   * WEAPONS[weaponId].kind. (trail → InkBlob, radial-pulse → ZapEvent never reach this map.)
+   */
+  mode: "linear" | "orbital";
+  /** Latest authoritative anchor in the server-time (Date.now) domain — re-anchored each delta. */
+  lastT: number;
+  lastX: number;
+  lastY: number;
+  /** Launch velocity (linear: drives both motion and orientation; constant for the projectile's life). */
   vx: number;
   vy: number;
+  /** Owner fish id (orbital anchoring). */
+  ownerId: number;
+  /** Orbit offset = projectile pos − owner rendered pos, captured at the last delta (orbital only). */
+  orbitOffX: number;
+  orbitOffY: number;
   radius: number;
   weaponId: string;
+  /** performance.now() of first-seen — drives sprite age fades. */
   spawnTime: number;
-  /** When the projectile was first seen. Used for fade-out of pulse rings. */
-  sprite: ProjectileSprite;
+  sprite: ProjectileSprite | SaucerSprite;
 }
 
-const INTERP_DELAY_MS = 100;
+/**
+ * How far in the past remote entities are rendered, to hide snapshot-arrival jitter.
+ * Measured on production: snapshots are sent every ~51ms but arrive bursty — inter-arrival
+ * gaps spike to ~150ms (F3 `snap jitter`). At 100ms a 150ms gap ran the interp cursor off
+ * the buffer into extrapolation → visible snap/stutter. 150ms keeps the cursor between real
+ * samples through the typical burst, at the cost of ~50ms more apparent lag on other fish.
+ */
+const INTERP_DELAY_MS = 150;
 /** Cap on velocity-based extrapolation past the newest sample — avoids overshoot on dropped packets. */
 const MAX_EXTRAP_MS = 100;
-/** Per-entity sample-buffer length. 6 ticks ≈ 300ms history covers the 100ms delay + 100ms extrap + jitter. */
-const SAMPLE_CAP = 6;
+/** Per-entity sample-buffer length. 10 ticks ≈ 500ms history covers the 150ms delay + 100ms extrap + bursty jitter. */
+const SAMPLE_CAP = 10;
+
+/**
+ * Projectiles are rendered at the PRESENT (not INTERP_DELAY_MS in the past like fish/chunks) so a
+ * bullet emerges from the predicted shooter's muzzle and tracks it smoothly. Linear bullets are
+ * dead-reckoned forward from their latest authoritative anchor; this caps how far, so a dropped
+ * packet can't let a fast bullet run away — the next snapshot re-anchors it seamlessly. Larger than
+ * MAX_EXTRAP_MS because we extrapolate forward past present (covering the ~150ms bursty arrival gap).
+ */
+const PROJ_MAX_EXTRAP_MS = 250;
+/** Optional lead added to projectile render time to match the self-prediction time base. Tune by playtest. */
+const PROJ_LEAD_MS = 0;
 
 /** Append a server-time-stamped position sample, de-duping a repeated timestamp and capping length. */
 function pushSample(samples: TimedSample[], t: number, x: number, y: number): void {
@@ -149,6 +182,17 @@ export class ArenaScene {
   /** Smoothed server-minus-client wall-clock offset (Date.now domain) driving R2 interpolation. */
   private interpOffset = 0;
   private interpOffsetInit = false;
+  // --- F3 network panel metrics ---
+  /** performance.now() of the last snapshot arrival, for inter-snapshot interval/jitter. */
+  private lastSnapAt = 0;
+  /** Rolling buffer (~30) of snapshot arrival intervals in ms. */
+  private snapIntervals: number[] = [];
+  /** Last server tick-body duration reported via SnapshotMsg.serverTickMs. */
+  private lastServerTickMs = 0;
+  /** Last measured input→ack round-trip in ms. */
+  private lastRttMs = 0;
+  /** Timestamped received-byte counts within a ~1s sliding window, for bytes/sec. */
+  private rxBytesWindow: Array<{ t: number; n: number }> = [];
   // --- client-side prediction (self fish only) ---
   /** Inputs sent but possibly not yet acked by the server, replayed each frame. */
   private inputBuffer: Array<{ seq: number; vx: number; vy: number; boost: boolean; sentAt: number }> = [];
@@ -250,6 +294,11 @@ export class ArenaScene {
     // Caustic water shader is overlaid on the base background.
     this.bg.filters = [this.waterFilter];
     this.projectileLayer.filters = [this.bloomFilter];
+    // Pin the bloom's sample area to the viewport. Without this, PixiJS sizes
+    // the filter render texture from projectileLayer's auto-computed bounds —
+    // which drift as projectiles/zaps move, leaving a screen-space band where
+    // projectiles fall outside the texture and render as nothing for a frame.
+    this.projectileLayer.filterArea = this.app.screen;
     // Blur fuses the individual soft ink blobs into one continuous, diffusing cloud.
     const inkBlur = new BlurFilter({ strength: 7, quality: 2 });
     inkBlur.padding = 24;
@@ -340,6 +389,12 @@ export class ArenaScene {
   }
 
   private bindNetwork(): void {
+    // Bandwidth tap for the F3 panel: record every received frame's char length; the
+    // render tick trims this to a 1s window and reports the sum as bytes/sec.
+    this.net.onRawMessage = (byteLen) => {
+      this.rxBytesWindow.push({ t: performance.now(), n: byteLen });
+      if (this.rxBytesWindow.length > 256) this.rxBytesWindow.shift();
+    };
     this.net.on("welcome", (msg: WelcomeMsg) => {
       if (msg.selfId) this.selfId = msg.selfId;
       this.callbacks.onWelcome?.(msg);
@@ -554,6 +609,37 @@ export class ArenaScene {
       this.interpOffset += (offsetSample - this.interpOffset) * 0.1;
     }
 
+    // --- F3 network panel: arrival timing, clock health, server-tick budget, RTT ---
+    if (this.lastSnapAt > 0) {
+      this.snapIntervals.push(recvTime - this.lastSnapAt);
+      if (this.snapIntervals.length > 30) this.snapIntervals.shift();
+    }
+    this.lastSnapAt = recvTime;
+    if (this.snapIntervals.length > 0) {
+      let sum = 0, lo = Infinity, hi = -Infinity;
+      for (const v of this.snapIntervals) { sum += v; if (v < lo) lo = v; if (v > hi) hi = v; }
+      perf.setGauge("snap interval", sum / this.snapIntervals.length, "ms");
+      perf.setGauge("snap jitter", hi - lo, "ms");
+    }
+    perf.setGauge("interp offset", this.interpOffset, "ms");
+    perf.setGauge("clk offset", this.clientServerOffset, "ms");
+    if (msg.serverTickMs != null) {
+      this.lastServerTickMs = msg.serverTickMs;
+      perf.setGauge("server tick", this.lastServerTickMs, "ms");
+    }
+    // RTT = arrival − sentAt of the input the server just acked. Read inputBuffer here,
+    // BEFORE reconcileSelf (below) prunes it to seq > ackSeq and drops the acked input.
+    if (msg.you) {
+      let acked: { seq: number; sentAt: number } | null = null;
+      for (const inp of this.inputBuffer) {
+        if (inp.seq <= msg.ackSeq && (acked === null || inp.seq > acked.seq)) acked = inp;
+      }
+      if (acked) {
+        this.lastRttMs = recvTime - acked.sentAt;
+        perf.setGauge("rtt", this.lastRttMs, "ms");
+      }
+    }
+
     if (msg.you) {
       // FX: detect changes to self state
       const massBefore = this.prevYouMass;
@@ -640,14 +726,16 @@ export class ArenaScene {
   }
 
   /** Hit marker: particles + sound + floating damage number; camera kick if we own the projectile or it landed on us. */
-  private handleHitEvent(h: { x: number; y: number; damage: number; targetId: number; byOwner: boolean }, recvTime: number): void {
+  private handleHitEvent(h: { x: number; y: number; damage: number; targetId: number; byOwner: boolean; weaponId?: string }, recvTime: number): void {
     const isSelfTarget = this.selfId != null && h.targetId === this.selfId;
     // Particle burst — scale by damage.
     const burstColor = h.byOwner ? 0xfff8c8 : isSelfTarget ? 0xff8888 : 0xc8e8ff;
     this.particles.emitShatter(h.x, h.y, burstColor, Math.min(36, 6 + h.damage * 1.2));
-    // Sound — punchier when it's our hit.
+    // Sound — punchier when it's our hit. Flyby (alien/overlord) lasers snipe so
+    // often that the hit blip becomes an unpleasant stutter, so they stay silent.
+    const isFlyby = h.weaponId != null && WEAPONS[h.weaponId as WeaponId]?.kind === "flyby";
     const vol = h.byOwner ? Math.min(1, 0.45 + h.damage * 0.04) : isSelfTarget ? 0.7 : 0.25;
-    snd.playWeaponHit(vol);
+    if (!isFlyby) snd.playWeaponHit(vol);
     // Floating damage number.
     this.spawnDamageNumber(h.x, h.y, h.damage, h.byOwner, isSelfTarget);
     // Self took damage → keep the chromatic flash visual we already had.
@@ -834,7 +922,7 @@ export class ArenaScene {
 
   private applyProjectileDelta(ent: EntityDelta, serverNow: number): void {
     // Sprite/blob ages are measured against the frame clock (performance.now), so spawn
-    // times stay in that domain; the interpolation buffer uses serverNow (Date.now domain).
+    // times stay in that domain; the dead-reckon anchor uses serverNow (Date.now domain).
     const spawnNow = performance.now();
     // Trail weapons (ink/kraken) render as static, age-fading diffusing blobs on the
     // blurred inkLayer rather than moving projectile sprites. They never move, so we
@@ -850,13 +938,31 @@ export class ArenaScene {
     if (!p) {
       const weaponId = ent.weaponId ?? "bubble";
       const radius = ent.radius ?? 8;
-      const sprite = new ProjectileSprite(weaponId, radius, spawnNow);
+      const ownerId = ent.ownerId ?? 0;
+      // Flyby weapons (Alien Friends / Overlord) send a UFO body as a linear,
+      // zero-damage projectile — render it as a saucer that dead-reckons like any
+      // bullet. Its lasers arrive separately as zap events.
+      const isFlyby = WEAPONS[weaponId as WeaponId]?.kind === "flyby";
+      const mode = WEAPONS[weaponId as WeaponId]?.kind === "orbital" ? "orbital" : "linear";
+      const sprite = isFlyby
+        ? new SaucerSprite(weaponId, radius, spawnNow)
+        : new ProjectileSprite(weaponId, radius, spawnNow);
       this.projectileLayer.addChild(sprite.container);
       sprite.setTransform(ent.x, ent.y, ent.vx ?? 0, ent.vy ?? 0);
+      // Orbital: capture the offset from the owner's currently-rendered position so the ring
+      // tracks the owner each frame instead of lagging 150ms behind it.
+      let orbitOffX = 0, orbitOffY = 0;
+      if (mode === "orbital") {
+        const owner = this.ownerRenderedPos(ownerId);
+        if (owner) { orbitOffX = ent.x - owner.x; orbitOffY = ent.y - owner.y; }
+      }
       p = {
         id: ent.id,
-        samples: [{ t: serverNow, x: ent.x, y: ent.y }],
+        mode,
+        lastT: serverNow, lastX: ent.x, lastY: ent.y,
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
+        ownerId,
+        orbitOffX, orbitOffY,
         radius,
         weaponId,
         spawnTime: spawnNow,
@@ -865,9 +971,24 @@ export class ArenaScene {
       this.projectiles.set(ent.id, p);
       return;
     }
-    pushSample(p.samples, serverNow, ent.x, ent.y);
+    // Re-anchor to the latest authoritative position. Velocity is sent only on first-seen and is
+    // constant for linear projectiles, so the guard keeps it unless the server ever re-sends it.
+    p.lastT = serverNow;
+    p.lastX = ent.x;
+    p.lastY = ent.y;
     if (ent.vx !== undefined) p.vx = ent.vx;
     if (ent.vy !== undefined) p.vy = ent.vy;
+    if (p.mode === "orbital") {
+      const owner = this.ownerRenderedPos(p.ownerId);
+      if (owner) { p.orbitOffX = ent.x - owner.x; p.orbitOffY = ent.y - owner.y; }
+    }
+  }
+
+  /** Owner fish's current rendered (sprite container) position, or null if the owner isn't present. */
+  private ownerRenderedPos(id: number): { x: number; y: number } | null {
+    const f = this.fishes.get(id);
+    if (!f) return null;
+    return { x: f.sprite.container.x, y: f.sprite.container.y };
   }
 
   private removeEntity(id: number): void {
@@ -955,13 +1076,20 @@ export class ArenaScene {
     chunkSpan.end();
 
     const projSpan = perf.begin("proj-interp");
+    // Projectiles render at the PRESENT (not renderTime, which is INTERP_DELAY_MS in the past) so
+    // they stay in sync with the predicted shooter. Linear bullets dead-reckon forward from their
+    // latest anchor at constant velocity (re-anchoring is seamless); orbitals ride the owner sprite.
+    const presentServerTime = Date.now() + this.interpOffset + PROJ_LEAD_MS;
     for (const p of this.projectiles.values()) {
-      const s = sampleAt(p.samples, renderTime, MAX_EXTRAP_MS);
-      if (!s) continue;
-      // Use the derived (buffered) velocity for orientation once it's meaningful; fall back to
-      // the launch velocity at spawn so a brand-new sprite doesn't flicker to rotation 0.
-      const useDerived = s.vx * s.vx + s.vy * s.vy > 1;
-      p.sprite.setTransform(s.x, s.y, useDerived ? s.vx : p.vx, useDerived ? s.vy : p.vy);
+      if (p.mode === "linear") {
+        const pos = deadReckon(p.lastX, p.lastY, p.vx, p.vy, presentServerTime - p.lastT, PROJ_MAX_EXTRAP_MS);
+        p.sprite.setTransform(pos.x, pos.y, p.vx, p.vy);
+      } else {
+        // orbital: anchor to the owner's current rendered position + captured orbit offset.
+        const owner = this.ownerRenderedPos(p.ownerId);
+        if (owner) p.sprite.setTransform(owner.x + p.orbitOffX, owner.y + p.orbitOffY, p.vx, p.vy);
+        // owner missing (off-screen / dead): leave the sprite put; server removal cleans it up.
+      }
     }
     for (const blob of this.inkBlobs.values()) blob.update(now);
     projSpan.end();
@@ -971,7 +1099,13 @@ export class ArenaScene {
     if (this.zaps.length > 0) {
       const resolve = (id: number, fallback: { x: number; y: number }) => {
         const f = this.fishes.get(id);
-        return f ? { x: f.sprite.container.x, y: f.sprite.container.y } : fallback;
+        if (f) return { x: f.sprite.container.x, y: f.sprite.container.y };
+        // Alien Friends lasers originate from the UFO projectile, not a fish — so a
+        // node id can also be a projectile (the saucer). Track its live position so
+        // the beam follows the moving ship during its brief flash.
+        const pr = this.projectiles.get(id);
+        if (pr) return { x: pr.sprite.container.x, y: pr.sprite.container.y };
+        return fallback;
       };
       for (let i = this.zaps.length - 1; i >= 0; i--) {
         const eff = this.zaps[i]!;
@@ -1062,6 +1196,29 @@ export class ArenaScene {
     perf.setCount("fruits", this.fruits.size);
     perf.setCount("chunks", this.chunks.size);
     perf.setCount("projectiles", this.projectiles.size);
+
+    // Pellets inside the visible camera rect — surfaces the Gaussian-clustering cost
+    // (more pellets per snapshot near the dense center) without touching the distribution.
+    {
+      const zoom = this.world.scale.x || 1;
+      const left = -this.world.x / zoom;
+      const top = -this.world.y / zoom;
+      const right = left + screenW / zoom;
+      const bottom = top + screenH / zoom;
+      let inView = 0;
+      for (const p of this.pellets.values()) {
+        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) inView++;
+      }
+      perf.setGauge("pellets/view", inView, "#");
+    }
+    perf.setGauge("pending in", this.inputBuffer.length, "#");
+    {
+      const cutoff = now - 1000;
+      while (this.rxBytesWindow.length > 0 && this.rxBytesWindow[0]!.t < cutoff) this.rxBytesWindow.shift();
+      let bytes = 0;
+      for (const e of this.rxBytesWindow) bytes += e.n;
+      perf.setGauge("rx", bytes, "B/s");
+    }
     perf.frame();
   };
 
@@ -1579,6 +1736,8 @@ function weaponGlyph(id: string): string {
     case "eel":     return "⚡";
     case "kraken":  return "✦";
     case "school":  return "◤";
+    case "alien":   return "⊙";
+    case "overlord":return "◉";
     default:        return "?";
   }
 }
@@ -1593,6 +1752,7 @@ function passiveGlyph(id: string): string {
     case "magnet":   return "◎";
     case "recovery": return "+";
     case "hungry":   return "◆";
+    case "closeEncounters": return "✴";
     default:         return "?";
   }
 }
@@ -1607,6 +1767,7 @@ function passiveColor(id: string): string {
     case "magnet":   return "#bf94e6";
     case "recovery": return "#ff7ba7";
     case "hungry":   return "#ffcb70";
+    case "closeEncounters": return "#66ffff";
     default:         return "#ffffff";
   }
 }
@@ -1623,6 +1784,8 @@ function weaponColor(id: string): string {
     case "eel":     return "#b088ff";
     case "kraken":  return "#96f550";
     case "school":  return "#ff6f30";
+    case "alien":   return "#66ff88";
+    case "overlord":return "#66ffff";
     default:        return "#ffffff";
   }
 }
