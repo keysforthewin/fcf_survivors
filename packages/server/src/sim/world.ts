@@ -4,7 +4,7 @@ import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEve
 import { SpatialHash } from "./spatial.ts";
 import { addAggro, maintainAiPopulation, pickAiName, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage, applyNibble } from "./weapon.ts";
-import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass, getEatRangeMult, getEffectiveMoveSpeed } from "./passives.ts";
+import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass, getEatRangeMult, getEffectiveMoveSpeed, applySybexAuras } from "./passives.ts";
 
 const MAX_PROJECTILES = 400;
 
@@ -210,6 +210,7 @@ export class World {
     orbitPhase?: number;
     orbitRadius?: number;
     isBody?: boolean;
+    pierce?: boolean;
   }): Projectile {
     if (this.projectiles.size >= MAX_PROJECTILES) {
       // Silent drop on cap. Reuse the requested id so callers don't crash.
@@ -226,6 +227,7 @@ export class World {
         orbitPhase: opts.orbitPhase,
         orbitRadius: opts.orbitRadius,
         isBody: opts.isBody,
+        pierce: opts.pierce,
       };
       return dummy;
     }
@@ -244,6 +246,7 @@ export class World {
       orbitPhase: opts.orbitPhase,
       orbitRadius: opts.orbitRadius,
       isBody: opts.isBody,
+      pierce: opts.pierce,
     };
     this.projectiles.set(proj.id, proj);
     return proj;
@@ -423,6 +426,11 @@ export class World {
 
   step(dtSec: number, now: number): void {
     this.tick++;
+
+    // Recompute Subversive Sybex proximity slows BEFORE any movement this tick — AI reads its slow
+    // inside updateAi (below) and players inside getEffectiveMoveSpeed, so the aura must be current.
+    // Uses last tick's fishHash (≤1 tick stale, same staleness AI already tolerates).
+    applySybexAuras(this);
 
     // spawn pellets up to target count — only while a human is connected, so an
     // idle (unwatched) server doesn't churn the pellet/fruit economy.

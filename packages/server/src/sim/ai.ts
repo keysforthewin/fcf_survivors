@@ -556,9 +556,9 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   fish.targetVy = tvy;
 
   const massMult = massSpeedMult(fish.mass);
-  // Battle Comms slow: a damaged AI's desired velocity is scaled down while the debuff
-  // is active, so it actually moves slower (mirrors the player path's getEffectiveMoveSpeed).
-  const slowMult = (fish.slowUntil ?? 0) > now ? SLOW.mult : 1;
+  // Slows scale a damaged/nearby AI's desired velocity so it actually moves slower (mirrors the
+  // player path's getEffectiveMoveSpeed): Battle Comms hit-slow × Subversive Sybex proximity aura.
+  const slowMult = ((fish.slowUntil ?? 0) > now ? SLOW.mult : 1) * (fish.auraSlowMult ?? 1);
   const desiredVx = tvx * speed * massMult * slowMult;
   const desiredVy = tvy * speed * massMult * slowMult;
   const accel = 8 * dt;

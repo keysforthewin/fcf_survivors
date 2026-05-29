@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, canSwallow, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS, SLOW } from "@fcf/shared";
+import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, canSwallow, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -11,6 +11,7 @@ import { FishSprite, parseColor } from "../render/fish.ts";
 import { ProjectileSprite } from "../render/projectile.ts";
 import { SaucerSprite } from "../render/saucer.ts";
 import { HeliSprite } from "../render/heli.ts";
+import { VehicleSprite } from "../render/vehicle.ts";
 import { InkBlob } from "../render/ink.ts";
 import { ZapEffect } from "../render/lightning.ts";
 import { ParticleSystem } from "../render/particles.ts";
@@ -102,7 +103,7 @@ interface ProjectileState {
   spawnTime: number;
   /** Per-target performance.now() of the last client-reported hit, for local re-hit throttling. */
   clientHitAt: Map<number, number>;
-  sprite: ProjectileSprite | SaucerSprite | HeliSprite;
+  sprite: ProjectileSprite | SaucerSprite | HeliSprite | VehicleSprite;
 }
 
 /**
@@ -245,7 +246,9 @@ export class ArenaScene {
   private youXp = 0;
   private youNextLevelXp = 13;
   private youBoostReadyAt = 0;
-  private youSlowUntil = 0;
+  /** Own-fish move-speed multiplier from all active slows (Battle Comms + Subversive Sybex aura),
+   *  combined server-side and shipped in every snapshot. 1 = no slow. Applied in stepSelf. */
+  private youSlowMult = 1;
   private youWeapons: YouWeaponSlot[] = [];
   private youPassives: YouPassiveSlot[] = [];
   private youPendingPicks = 0;
@@ -543,7 +546,7 @@ export class ArenaScene {
     }
     this.prevBoostHeld = held;
     const boostMult = estServerNow < this.selfBoostUntil ? FISH.boostMultiplier : 1;
-    const slowMult = estServerNow < this.youSlowUntil ? SLOW.mult : 1;
+    const slowMult = this.youSlowMult;
     // Movement intent (normalized exactly as the server does). The level-up modal is
     // non-blocking — the player keeps swimming while it's open, so intent is never zeroed.
     let ivx = this.input.state.vx;
@@ -704,7 +707,7 @@ export class ArenaScene {
       this.youXp = msg.you.xp;
       this.youNextLevelXp = msg.you.nextLevelXp;
       this.youBoostReadyAt = msg.you.boostReadyAt;
-      this.youSlowUntil = msg.you.slowUntil ?? 0;
+      this.youSlowMult = msg.you.slowMult ?? 1;
       this.youWeapons = msg.you.weapons;
       this.youPassives = msg.you.passives ?? [];
       this.youPendingPicks = msg.you.pendingPicks ?? 0;
@@ -1035,11 +1038,14 @@ export class ArenaScene {
       const wkind = WEAPONS[weaponId as WeaponId]?.kind;
       const isFlyby = wkind === "flyby";
       const isHeliBody = wkind === "heli" && ent.body === true;
+      const isVehicle = wkind === "vehicle";
       const mode = wkind === "orbital" ? "orbital" : "linear";
       const sprite = isFlyby
         ? new SaucerSprite(weaponId, radius, spawnNow)
         : isHeliBody
         ? new HeliSprite(weaponId, radius, spawnNow)
+        : isVehicle
+        ? new VehicleSprite(weaponId, ent.id, radius, spawnNow)
         : new ProjectileSprite(weaponId, radius, spawnNow);
       this.projectileLayer.addChild(sprite.container);
       sprite.setTransform(ent.x, ent.y, ent.vx ?? 0, ent.vy ?? 0);

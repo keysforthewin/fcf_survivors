@@ -406,6 +406,26 @@ export function battleCommsSlowMs(stack: number): number {
   return stack <= 0 ? 0 : SLOW.baseMs + SLOW.perStackMs * (stack - 1);
 }
 
+/** Subversive Sybex: a proximity aura that slows nearby fish so the owner can catch them. */
+export const SYBEX = {
+  /** Aura radius (px) added per passive stack: stack N reaches N×100px. */
+  radiusPerStack: 100,
+  /** Move-speed reduction per stack: stack N slows fish in range by N×10%. */
+  slowPerStack: 0.10,
+  /** Floor on the resulting multiplier so future maxStack bumps can't freeze a fish solid. */
+  minMult: 0.1,
+} as const;
+
+/** Sybex aura radius (px) for a stack count. Stack 0 = 0 (no aura). */
+export function sybexRadius(stack: number): number {
+  return stack <= 0 ? 0 : stack * SYBEX.radiusPerStack;
+}
+
+/** Move-speed multiplier a Sybex owner imposes on fish in range. Stack 0 = 1 (no slow); stack 5 = 0.5. */
+export function sybexSlowMult(stack: number): number {
+  return stack <= 0 ? 1 : Math.max(SYBEX.minMult, 1 - SYBEX.slowPerStack * stack);
+}
+
 /**
  * Rotate a unit-vector heading toward a target unit-vector heading at a clamped angular rate.
  * Returns the new unit vector. Caller is responsible for handling near-zero target vectors.

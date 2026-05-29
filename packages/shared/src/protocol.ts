@@ -234,8 +234,14 @@ export interface SnapshotMsg {
     nextLevelXp: number;
     boostReadyAt: number;
     boostUntil: number;
-    /** Wall-time until which the player's own fish is slowed (Battle Comms). 0 = not slowed. The client applies the SLOW.mult itself in stepSelf. */
+    /** Wall-time until which the player's own fish is slowed (Battle Comms). 0 = not slowed. Retained for compatibility/cues. */
     slowUntil: number;
+    /**
+     * The player's effective move-speed multiplier from all active slows this tick (Battle Comms +
+     * Subversive Sybex proximity aura), already combined server-side. 1 = no slow. The client applies
+     * this directly in stepSelf — it's the single source of truth for the own-fish slow (subsumes slowUntil).
+     */
+    slowMult?: number;
     serverNow: number;
     weapons: YouWeaponSlot[];
     passives: YouPassiveSlot[];

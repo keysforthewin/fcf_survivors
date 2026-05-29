@@ -12,7 +12,9 @@ export type WeaponId =
   | "school"
   | "overlord"
   | "heli"
-  | "gunship";
+  | "gunship"
+  | "nitros"
+  | "dealership";
 
 export type WeaponKind =
   | "projectile"     // linear projectile, dies on first hit
@@ -21,7 +23,8 @@ export type WeaponKind =
   | "trail"          // drops a static damaging zone behind owner periodically
   | "orbital"        // N projectiles orbiting owner, persistent
   | "flyby"          // N summoned ships cross the screen, pulsing AoE lasers along the way
-  | "heli";          // a summoned minicopter that loiters around the player and fires lead-aimed bullets
+  | "heli"           // a summoned minicopter that loiters around the player and fires lead-aimed bullets
+  | "vehicle";       // N large cars sweep across the screen in a straight line, piercing every fish in their lane
 
 export interface WeaponLevel {
   damage: number;
@@ -247,6 +250,32 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
       { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
       { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
+    ],
+  },
+  nitros: {
+    id: "nitros",
+    name: "Nitro's Customs",
+    description: "Sends beat-up Rust cars tearing across the screen — they plow through every fish in their lane. One more car per level.",
+    kind: "vehicle",
+    levels: [
+      // count = damage = level. speed is derived at fire time (2·viewRadius / lifetime), like flyby — range is HUD-only.
+      // reHitMs = lifetimeMs so each fish is run over once per car (also gates server vs client double-apply).
+      { damage: 1, cooldownMs: 14000, count: 1, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+      { damage: 2, cooldownMs: 13000, count: 2, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+      { damage: 3, cooldownMs: 12000, count: 3, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+      { damage: 4, cooldownMs: 11000, count: 4, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+      { damage: 5, cooldownMs: 10000, count: 5, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+    ],
+  },
+  dealership: {
+    id: "dealership", name: "Nitro's Dealership", description: "Seven exotic supercars scream across at once — each a different ride.",
+    kind: "vehicle", evolutionOf: "nitros",
+    levels: [
+      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
+      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
+      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
+      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
+      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
     ],
   },
 };

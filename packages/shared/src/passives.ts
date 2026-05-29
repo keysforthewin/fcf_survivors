@@ -1,5 +1,5 @@
 export type PassiveId =
-  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters" | "comms";
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters" | "comms" | "sybex";
 
 export type PassiveEffect =
   | "moveSpeedMult"
@@ -11,7 +11,8 @@ export type PassiveEffect =
   | "boostCdMult"
   | "fishEatMassMult"
   | "fishEatRangeMult"
-  | "enemySlowOnHit";
+  | "enemySlowOnHit"
+  | "proximitySlow";
 
 export interface PassiveDef {
   id: PassiveId;
@@ -69,9 +70,14 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
     id: "comms", name: "Battle Comms", description: "Fish you damage are slowed to 50% speed — 0.2s, +0.1s per stack.",
     maxStack: 5, perStack: 1, effect: "enemySlowOnHit",
   },
+  sybex: {
+    id: "sybex", name: "Subversive Sybex", description: "Fish within 100px per stack are slowed 10% per stack — drag them down so you can catch and eat them.",
+    // perStack is unused: the radius + slow magnitude are computed from the stack directly (see sybexRadius/sybexSlowMult).
+    maxStack: 5, perStack: 1, effect: "proximitySlow",
+  },
 };
 
-export const PASSIVE_IDS: PassiveId[] = ["fin", "gulp", "scales", "teeth", "reflex", "magnet", "recovery", "hungry", "closeEncounters", "comms"];
+export const PASSIVE_IDS: PassiveId[] = ["fin", "gulp", "scales", "teeth", "reflex", "magnet", "recovery", "hungry", "closeEncounters", "comms", "sybex"];
 
 /** Multiply base by passive's per-stack factor `stack` times. Stack 0 = 1.0. */
 export function stackedMult(perStack: number, stack: number): number {

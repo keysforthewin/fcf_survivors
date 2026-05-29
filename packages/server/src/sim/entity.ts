@@ -78,7 +78,7 @@ export interface HeliState {
 }
 
 export type PassiveId =
-  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters" | "comms";
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters" | "comms" | "sybex";
 
 export interface Fish {
   id: EntityId;
@@ -133,6 +133,11 @@ export interface Fish {
   spawnProtectedUntil?: number;
   /** Wall-time until which this fish moves at SLOW.mult speed (Battle Comms debuff). 0/undefined = not slowed. */
   slowUntil?: number;
+  /**
+   * Transient per-tick move-speed multiplier from Subversive Sybex proximity auras (1 = none).
+   * Recomputed every tick by applySybexAuras before AI/player movement; the strongest nearby aura wins.
+   */
+  auraSlowMult?: number;
   boost: boolean;
   boostUntil: number;
   boostReadyAt: number;
@@ -289,6 +294,9 @@ export interface Projectile {
   behavior: ProjectileBehavior;
   /** Heli weapons only: true for the minicopter BODY (damage 0), false/undefined for its bullets. Drives client sprite choice. */
   isBody?: boolean;
+  /** Vehicle weapons (Nitro's Customs/Dealership): a piercing body that plows through every fish it touches
+   *  instead of expiring on first contact. The reHitMs gate (set to the lifetime) keeps it to one hit per fish. */
+  pierce?: boolean;
   /** Heli body only, refreshed each tick: the smoothed nose angle (rad). Shipped in the snapshot so the
    *  client rotates the sprite to where the heli is aiming (not just its travel direction). */
   facing?: number;

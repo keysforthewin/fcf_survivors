@@ -199,7 +199,60 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
       case "heli":
         tickHeli(world, fish, slot, lvl, dmg, now, cdMult);
         break;
+      case "vehicle":
+        // Cars are fire-and-forget (no per-wave state like flyby): on cooldown, launch a wave that
+        // sweeps across the screen and pierces every fish in its lane.
+        if (now >= slot.cooldownReadyAt) {
+          fireVehicleWave(world, fish, slot, lvl, dmg, now);
+          slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
+        }
+        break;
     }
+  }
+}
+
+/** Lateral gap between adjacent cars in a wave (px) — roughly a car-width so they read as a row, not a stack. */
+const VEHICLE_LANE_SPACING = 600;
+
+/**
+ * Nitro's Customs / Dealership: launch a wave of `count` large cars that sweep ACROSS the player's
+ * screen in one straight line (mirrors the flyby crossing — enter one edge, exit the opposite). The
+ * cars ride a band perpendicular to travel so they form a row. Each is a piercing linear body that
+ * plows through every fish it touches for `damage`; the reHitMs gate (= lifetime) keeps it to one hit
+ * per fish and stops the server/client hit paths double-applying.
+ */
+function fireVehicleWave(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): void {
+  const count = lvl.count ?? 1;
+  const lifetimeMs = lvl.lifetimeMs ?? 3800;
+  const radius = lvl.radius ?? 240;
+  const R = viewRadius(fish.mass);
+  const speed = (2 * R) / (lifetimeMs / 1000); // cross the full view (enter edge → exit edge) over the lifetime
+  // One random crossing direction for the whole volley, plus the unit vector perpendicular to it.
+  const angle = world.rng() * Math.PI * 2;
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+  const perpX = -dirY;
+  const perpY = dirX;
+  // Band spans (count-1)*spacing, capped at the view diameter so every lane still crosses the visible disk.
+  const band = Math.min((count - 1) * VEHICLE_LANE_SPACING, 2 * R);
+  for (let i = 0; i < count; i++) {
+    const off = count === 1 ? 0 : band * (i / (count - 1) - 0.5);
+    const ox = perpX * off;
+    const oy = perpY * off;
+    world.spawnProjectile({
+      ownerId: fish.id,
+      weaponId: slot.id,
+      x: fish.x - dirX * R + ox,
+      y: fish.y - dirY * R + oy,
+      vx: dirX * speed,
+      vy: dirY * speed,
+      damage,
+      radius,
+      expiresAt: now + lifetimeMs,
+      behavior: "linear",
+      pierce: true,
+      reHitMs: lvl.reHitMs ?? lifetimeMs,
+    });
   }
 }
 
@@ -901,8 +954,9 @@ export function applyProjectileDamage(world: World, now: number): void {
       proj.hits.set(target.id, now);
       applyHit(world, target, owner, proj.damage, proj.weaponId, now);
 
-      if (proj.behavior === "linear") {
-        // expire after first hit
+      if (proj.behavior === "linear" && !proj.pierce) {
+        // expire after first hit (piercing vehicles plow on through; the reHitMs gate above keeps
+        // them to one hit per fish)
         proj.expiresAt = now;
         break;
       }
@@ -942,7 +996,7 @@ export function applyClientWeaponHit(
   }
   proj.hits.set(target.id, now);
   applyHit(world, target, owner, proj.damage, proj.weaponId, now);
-  if (proj.behavior === "linear") proj.expiresAt = now; // single-hit bullets expire on contact
+  if (proj.behavior === "linear" && !proj.pierce) proj.expiresAt = now; // single-hit bullets expire on contact; piercing vehicles continue
   return true;
 }
 

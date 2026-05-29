@@ -12,6 +12,7 @@ import { ArenaScene } from "./scenes/arena.ts";
 import { loadIdentity, saveIdentity } from "./identity.ts";
 import { preloadFishTextures } from "./render/species-textures.ts";
 import { preloadHeliTextures } from "./render/heli-textures.ts";
+import { preloadVehicleTextures } from "./render/vehicle-textures.ts";
 import { preloadIcons } from "./render/icons.ts";
 import { DEFAULT_SPECIES_ID, type EatenMsg, type LeaderboardEntry, type WelcomeMsg } from "@fcf/shared";
 
@@ -30,6 +31,7 @@ async function main() {
   // Warm the photo-real fish textures before the title/arena so sprites render immediately.
   await preloadFishTextures();
   await preloadHeliTextures();
+  await preloadVehicleTextures();
   // Fire-and-forget warm of the HUD ability icons (skill pips + level-up cards).
   preloadIcons();
 

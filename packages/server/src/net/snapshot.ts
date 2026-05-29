@@ -1,5 +1,5 @@
 import type { EntityDelta, HitEvent, SnapshotMsg, YouPassiveSlot, YouWeaponSlot, ZapEvent } from "@fcf/shared";
-import { MASS_DECAY, MAX_PROJECTILE_RADIUS, viewRadius, xpForLevel } from "@fcf/shared";
+import { MASS_DECAY, MAX_PROJECTILE_RADIUS, SLOW, viewRadius, xpForLevel } from "@fcf/shared";
 import type { World } from "../sim/world.ts";
 import type { Chunk, Fish, Fruit, Pellet, Projectile } from "../sim/entity.ts";
 import { getMoveSpeed } from "../sim/passives.ts";
@@ -211,6 +211,9 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       boostReadyAt: self.boostReadyAt,
       boostUntil: self.boostUntil,
       slowUntil: self.slowUntil ?? 0,
+      // Combined own-fish slow this tick (Battle Comms hit-slow × Subversive Sybex proximity aura).
+      // The client (which authoritatively integrates its own fish) applies this directly in stepSelf.
+      slowMult: ((self.slowUntil ?? 0) > now ? SLOW.mult : 1) * (self.auraSlowMult ?? 1),
       serverNow: now,
       weapons,
       passives,

@@ -19,10 +19,11 @@ export const EVOLUTIONS: Record<string, EvolutionDef> = {
   piranha: { base: "piranha", passive: "hungry",          evolutionId: "school"   },
   alien:   { base: "alien",   passive: "closeEncounters", evolutionId: "overlord" },
   heli:    { base: "heli",    passive: "comms",           evolutionId: "gunship"  },
+  nitros:  { base: "nitros",  passive: "sybex",           evolutionId: "dealership" },
 };
 
-export const BASE_WEAPONS: WeaponId[] = ["bubble", "spine", "pulse", "ink", "piranha", "alien", "heli"];
-export const EVOLUTION_WEAPONS: WeaponId[] = ["tidal", "puffer", "eel", "kraken", "school", "overlord", "gunship"];
+export const BASE_WEAPONS: WeaponId[] = ["bubble", "spine", "pulse", "ink", "piranha", "alien", "heli", "nitros"];
+export const EVOLUTION_WEAPONS: WeaponId[] = ["tidal", "puffer", "eel", "kraken", "school", "overlord", "gunship", "dealership"];
 
 export function isEvolutionWeapon(id: WeaponId): boolean {
   return EVOLUTION_WEAPONS.includes(id);
