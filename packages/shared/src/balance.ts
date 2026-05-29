@@ -391,6 +391,21 @@ export function xpDroppedOnDeath(victimLevel: number, victimMass: number): numbe
   return baseFromMass + Math.max(0, victimLevel - 1) * 25;
 }
 
+/** Battle Comms: the slow debuff applied to any fish you damage. */
+export const SLOW = {
+  /** Move-speed multiplier while slowed. */
+  mult: 0.5,
+  /** Slow duration (ms) at Battle Comms stack 1. */
+  baseMs: 200,
+  /** Added slow duration (ms) per Battle Comms stack beyond the first. */
+  perStackMs: 100,
+} as const;
+
+/** Slow duration (ms) for a Battle Comms stack count. Stack 0 (no passive) = no slow. */
+export function battleCommsSlowMs(stack: number): number {
+  return stack <= 0 ? 0 : SLOW.baseMs + SLOW.perStackMs * (stack - 1);
+}
+
 /**
  * Rotate a unit-vector heading toward a target unit-vector heading at a clamped angular rate.
  * Returns the new unit vector. Caller is responsible for handling near-zero target vectors.

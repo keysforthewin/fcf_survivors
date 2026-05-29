@@ -10,7 +10,9 @@ export type WeaponId =
   | "eel"
   | "kraken"
   | "school"
-  | "overlord";
+  | "overlord"
+  | "heli"
+  | "gunship";
 
 export type WeaponKind =
   | "projectile"     // linear projectile, dies on first hit
@@ -18,7 +20,8 @@ export type WeaponKind =
   | "radial-pulse"   // instantaneous AoE around owner; spawns short vis-only static blob
   | "trail"          // drops a static damaging zone behind owner periodically
   | "orbital"        // N projectiles orbiting owner, persistent
-  | "flyby";         // N summoned ships cross the screen, pulsing AoE lasers along the way
+  | "flyby"          // N summoned ships cross the screen, pulsing AoE lasers along the way
+  | "heli";          // a summoned minicopter that loiters around the player and fires lead-aimed bullets
 
 export interface WeaponLevel {
   damage: number;
@@ -217,6 +220,33 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { damage: 7, cooldownMs: 8100,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
       { damage: 7, cooldownMs: 7290,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
       { damage: 7, cooldownMs: 6561,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+    ],
+  },
+  heli: {
+    id: "heli",
+    name: "Mortal's Heli",
+    description: "A minicopter circles you and snipes fish with a lead-aimed AK — twice the fire rate of the AK. Appears for 8s every 20s.",
+    kind: "heli",
+    levels: [
+      // cooldownMs = summon interval (20s); lifetimeMs = uptime (8s); intervalMs = ms/shot
+      // (~2x the AK's 1500→1100); range is HUD-only. speed/radius mirror the AK bullet.
+      { damage: 1, cooldownMs: 20000, count: 1, range: 2400, intervalMs: 700, lifetimeMs: 8000, speed: 420, radius: 18 },
+      { damage: 2, cooldownMs: 20000, count: 1, range: 2400, intervalMs: 660, lifetimeMs: 8000, speed: 445, radius: 18 },
+      { damage: 3, cooldownMs: 20000, count: 1, range: 2400, intervalMs: 620, lifetimeMs: 8000, speed: 470, radius: 18 },
+      { damage: 4, cooldownMs: 20000, count: 1, range: 2400, intervalMs: 580, lifetimeMs: 8000, speed: 495, radius: 18 },
+      { damage: 5, cooldownMs: 20000, count: 1, range: 2400, intervalMs: 550, lifetimeMs: 8000, speed: 520, radius: 18 },
+    ],
+  },
+  gunship: {
+    id: "gunship", name: "Attack Helicopter", description: "Rust's patrol heli — dual miniguns, rapid fire, longer patrols.",
+    kind: "heli", evolutionOf: "heli",
+    levels: [
+      // Dual-minigun: 2 bullets/burst with a slight spread; rapid 300ms cadence; 10s uptime, 16s cooldown.
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
     ],
   },
 };
