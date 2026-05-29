@@ -48,7 +48,7 @@ export interface FlybyState {
 }
 
 export type PassiveId =
-  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters";
+  | "fin" | "gulp" | "scales" | "teeth" | "reflex" | "magnet" | "recovery" | "hungry" | "closeEncounters" | "comms";
 
 export interface Fish {
   id: EntityId;
