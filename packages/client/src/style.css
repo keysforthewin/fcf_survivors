@@ -238,10 +238,6 @@ body::after {
   right: 14px;
 }
 
-.death-gear svg {
-  transform: translateX(-1px);
-}
-
 .title-card .subtitle {
   margin: 0.7rem 0 0;
   color: var(--text-dim);
