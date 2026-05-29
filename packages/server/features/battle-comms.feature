@@ -28,3 +28,13 @@ Feature: Battle Comms (slow-on-damage passive)
     When the world advances 10 ticks
     Then "Gunner" has at least 1 weapon hits
     And "Prey" is not slowed
+
+  # The slow must actually reduce AI movement — AI integrate on a separate path from
+  # players. Two equal-mass AI fish far apart both wander at full mode speed; slowing
+  # one halves its desired velocity, so its speed magnitude stays strictly lower.
+  Scenario: A slowed AI fish moves slower than an un-slowed one
+    Given an AI fish "Slowpoke" at (3000, 4000) with mass 50
+    And an AI fish "Speedy" at (6000, 4000) with mass 50
+    And "Slowpoke" is slowed for 5000 ms
+    When the world advances 20 ticks
+    Then "Slowpoke" moves slower than "Speedy"

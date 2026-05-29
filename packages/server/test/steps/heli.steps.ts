@@ -1,4 +1,4 @@
-import { Then } from "@cucumber/cucumber";
+import { Given, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
 import { WEAPONS, parseCardId } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
@@ -43,6 +43,21 @@ Then("{string} effective move speed is halved", function (this: TestWorld, name:
   const eff = getEffectiveMoveSpeed(f, sim.clock.now());
   const base = getMoveSpeed(f);
   assert.ok(Math.abs(eff - base * 0.5) < 1e-6, `expected halved speed, got ${eff} vs base ${base}`);
+});
+
+Given("{string} is slowed for {int} ms", function (this: TestWorld, name: string, ms: number) {
+  const sim = this.requireSim();
+  const f = getFish(sim, name);
+  f.slowUntil = sim.clock.now() + ms;
+});
+
+Then("{string} moves slower than {string}", function (this: TestWorld, slow: string, fast: string) {
+  const sim = this.requireSim();
+  const a = getFish(sim, slow);
+  const b = getFish(sim, fast);
+  const sa = Math.hypot(a.vx, a.vy);
+  const sb = Math.hypot(b.vx, b.vy);
+  assert.ok(sa < sb, `expected ${slow} (speed ${sa.toFixed(1)}) to move slower than ${fast} (speed ${sb.toFixed(1)})`);
 });
 
 Then(

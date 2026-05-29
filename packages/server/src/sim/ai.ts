@@ -1,4 +1,4 @@
-import { AGGRO, AI, ARENA, FRENZY, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
+import { AGGRO, AI, ARENA, FRENZY, SLOW, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
 import type { EntityId } from "@fcf/shared";
 import type { AiState, Chunk, Fish } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -556,8 +556,11 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   fish.targetVy = tvy;
 
   const massMult = massSpeedMult(fish.mass);
-  const desiredVx = tvx * speed * massMult;
-  const desiredVy = tvy * speed * massMult;
+  // Battle Comms slow: a damaged AI's desired velocity is scaled down while the debuff
+  // is active, so it actually moves slower (mirrors the player path's getEffectiveMoveSpeed).
+  const slowMult = (fish.slowUntil ?? 0) > now ? SLOW.mult : 1;
+  const desiredVx = tvx * speed * massMult * slowMult;
+  const desiredVy = tvy * speed * massMult * slowMult;
   const accel = 8 * dt;
   fish.vx += (desiredVx - fish.vx) * accel;
   fish.vy += (desiredVy - fish.vy) * accel;
