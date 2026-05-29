@@ -124,6 +124,35 @@ Feature: AI fish behaviour
     And the world advances 80 ticks
     Then "Survivor" is at least 600 units from (4200, 4000)
 
+  # --- Vehicle (car) avoidance. A Nitro's car pierces every fish in its lane, so an AI treats an
+  # oncoming car as a lethal threat and dodges it like a predator — even with no predator fish
+  # nearby. Triggers within AI.carAvoidRadius (750), regardless of the fish's size. ---
+
+  Scenario: An AI flees an oncoming car within avoidance range
+    Given an AI fish "Dodger" at (4000, 4000) with mass 10 in "wander" mode
+    And a car at (4000, 3500) moving (0, 400)
+    When the world advances 1 tick
+    Then "Dodger" is in "flee" mode
+
+  Scenario: An AI ignores a car far outside avoidance range
+    Given an AI fish "Calm" at (4000, 4000) with mass 10 in "wander" mode
+    And a car at (4000, 1000) moving (0, 400)
+    When the world advances 1 tick
+    Then "Calm" is in "wander" mode
+
+  Scenario: A big AI still dodges a car (it pierces every fish, size doesn't matter)
+    Given an AI fish "Whale" at (4000, 4000) with mass 200 in "wander" mode
+    And a car at (4000, 3500) moving (0, 400)
+    When the world advances 1 tick
+    Then "Whale" is in "flee" mode
+
+  Scenario: A car-dodging AI actively clears the lane
+    Given an AI fish "Sprinter" at (4000, 4000) with mass 10 in "wander" mode
+    And a car at (4000, 3500) moving (0, 400)
+    And baseline position of "Sprinter"
+    When the world advances 12 ticks
+    Then "Sprinter" has moved at least 150 units
+
   # AI fish never shrink (they're exempt from mass decay), so an uncapped AI
   # would grow without bound. AI.maxMass caps them at 200 across every way a
   # fish gains mass: pellets, chunks, and eating other fish.

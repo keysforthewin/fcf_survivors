@@ -1,6 +1,6 @@
 import { AGGRO, AI, ARENA, FRENZY, SLOW, SPECIES, aiAggroRamp, aiHuntRadius, aiLeashRadius, canEat, massSpeedMult } from "@fcf/shared";
 import type { EntityId } from "@fcf/shared";
-import type { AiState, Chunk, Fish } from "./entity.ts";
+import type { AiState, Chunk, Fish, Projectile } from "./entity.ts";
 import type { World } from "./world.ts";
 
 /**
@@ -51,6 +51,45 @@ function fleeSpeedAt(elapsedMs: number): number {
   if (elapsedMs >= AI.fleePanicDurationMs) return AI.fleeSpeed;
   const t = Math.max(0, elapsedMs) / AI.fleePanicDurationMs;
   return AI.fleePanicSpeed + (AI.fleeSpeed - AI.fleePanicSpeed) * t;
+}
+
+/**
+ * Hybrid car-dodge direction (unit vector): blend "straight away from the car" with "perpendicular
+ * off its travel lane" so the fish both flees and actually steps clear of the path — a pure radial
+ * flee from a fast car gets overtaken along the car's own axis. Head-on (fish directly in the car's
+ * path, so no perpendicular offset) falls back to a fixed-side step via the cross-product sign so it
+ * never freezes. Mirrors the flee direction math but adds the lane-clearing perpendicular term.
+ */
+function carDodgeDir(fish: Fish, car: Projectile): { x: number; y: number } {
+  const ox = fish.x - car.x;
+  const oy = fish.y - car.y;
+  const oLen = Math.hypot(ox, oy) || 1;
+  const ax = ox / oLen;
+  const ay = oy / oLen; // unit "away from the car"
+  let px = ax;
+  let py = ay; // perpendicular term — defaults to "away" when the car isn't moving
+  const cs = Math.hypot(car.vx, car.vy);
+  if (cs > 1e-3) {
+    const ux = car.vx / cs;
+    const uy = car.vy / cs; // car travel unit
+    const dot = ox * ux + oy * uy;
+    px = ox - dot * ux;
+    py = oy - dot * uy; // component of the offset perpendicular to the car's travel
+    let pl = Math.hypot(px, py);
+    if (pl < 1e-3) {
+      // Head-on: the offset is all along the travel axis, so it gives no side. Pick one.
+      const s = ux * oy - uy * ox >= 0 ? 1 : -1;
+      px = -uy * s;
+      py = ux * s;
+      pl = 1;
+    }
+    px /= pl;
+    py /= pl;
+  }
+  const bx = ax + px;
+  const by = ay + py;
+  const bl = Math.hypot(bx, by) || 1;
+  return { x: bx / bl, y: by / bl };
 }
 
 export function spawnAiFish(world: World, mass?: number): Fish {
@@ -381,7 +420,41 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   let tvx = Math.cos(state.wanderHeading);
   let tvy = Math.sin(state.wanderHeading);
 
-  if (chosenPredator) {
+  // Nearest piercing car (Nitro's vehicle) within carAvoidRadius. A car plows through every fish in
+  // its lane regardless of size, so AI dodges it like a lethal predator. Iterate projectiles
+  // directly (not the spatial hash, which lags a tick) so a freshly-spawned car is seen immediately,
+  // matching how fish-predator detection reads live positions. Guarded so the common no-projectile
+  // tick does zero work; pierce is vehicle-exclusive (only fireVehicleWave sets it).
+  let dangerCar: Projectile | null = null;
+  if (world.projectiles.size > 0) {
+    let dangerCarD2 = AI.carAvoidRadius * AI.carAvoidRadius;
+    for (const p of world.projectiles.values()) {
+      if (p.pierce !== true) continue;
+      const dx = fish.x - p.x;
+      const dy = fish.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > dangerCarD2) continue;
+      dangerCarD2 = d2;
+      dangerCar = p;
+    }
+  }
+
+  if (dangerCar) {
+    // Piercing car bearing down — panic-dodge off its lane (hybrid: away + perpendicular). Outranks
+    // predator/feed/chase: a car is lethal to fish of any size. Reuses the flee machinery (panic
+    // speed, commitment window, memory) but doesn't set targetId — a car isn't a fish.
+    const wasFleeing = state.mode === "flee";
+    state.mode = "flee";
+    if (!wasFleeing) state.fleeStartedAt = now;
+    state.modeUntil = now + AI.fleeMinDurationMs;
+    state.fleeLastKnownX = dangerCar.x;
+    state.fleeLastKnownY = dangerCar.y;
+    state.fleeMemoryUntil = now + AI.fleeMinDurationMs + AI.fleeMemoryMs;
+    const d = carDodgeDir(fish, dangerCar);
+    tvx = d.x;
+    tvy = d.y;
+    speed = fleeSpeedAt(now - state.fleeStartedAt);
+  } else if (chosenPredator) {
     const wasFleeing = state.mode === "flee";
     if (state.targetId !== chosenPredator.id) {
       state.targetId = chosenPredator.id;

@@ -255,27 +255,27 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   nitros: {
     id: "nitros",
     name: "Nitro's Customs",
-    description: "Sends beat-up Rust cars tearing across the screen — they plow through every fish in their lane. One more car per level.",
+    description: "Sends a beat-up Rust car tearing across the screen — it plows through every fish in its lane. Hits harder and recharges faster each level.",
     kind: "vehicle",
     levels: [
-      // count = damage = level. speed is derived at fire time (2·viewRadius / lifetime), like flyby — range is HUD-only.
+      // Always 1 car; damage = level. speed is derived at fire time (2·viewRadius / lifetime), like flyby — range is HUD-only.
       // reHitMs = lifetimeMs so each fish is run over once per car (also gates server vs client double-apply).
-      { damage: 1, cooldownMs: 14000, count: 1, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
-      { damage: 2, cooldownMs: 13000, count: 2, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
-      { damage: 3, cooldownMs: 12000, count: 3, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
-      { damage: 4, cooldownMs: 11000, count: 4, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
-      { damage: 5, cooldownMs: 10000, count: 5, range: 2400, lifetimeMs: 3800, radius: 240, reHitMs: 3800 },
+      { damage: 1, cooldownMs: 14000, count: 1, range: 2400, lifetimeMs: 7600, radius: 240, reHitMs: 7600 },
+      { damage: 2, cooldownMs: 13000, count: 1, range: 2400, lifetimeMs: 7600, radius: 240, reHitMs: 7600 },
+      { damage: 3, cooldownMs: 12000, count: 1, range: 2400, lifetimeMs: 7600, radius: 240, reHitMs: 7600 },
+      { damage: 4, cooldownMs: 11000, count: 1, range: 2400, lifetimeMs: 7600, radius: 240, reHitMs: 7600 },
+      { damage: 5, cooldownMs: 10000, count: 1, range: 2400, lifetimeMs: 7600, radius: 240, reHitMs: 7600 },
     ],
   },
   dealership: {
-    id: "dealership", name: "Nitro's Dealership", description: "Seven exotic supercars scream across at once — each a different ride.",
+    id: "dealership", name: "Nitro's Dealership", description: "Three exotic supercars scream across at once — each a different ride.",
     kind: "vehicle", evolutionOf: "nitros",
     levels: [
-      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
-      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
-      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
-      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
-      { damage: 7, cooldownMs: 9000, count: 7, range: 2400, lifetimeMs: 3600, radius: 240, reHitMs: 3600 },
+      { damage: 7, cooldownMs: 9000, count: 3, range: 2400, lifetimeMs: 7200, radius: 240, reHitMs: 7200 },
+      { damage: 7, cooldownMs: 9000, count: 3, range: 2400, lifetimeMs: 7200, radius: 240, reHitMs: 7200 },
+      { damage: 7, cooldownMs: 9000, count: 3, range: 2400, lifetimeMs: 7200, radius: 240, reHitMs: 7200 },
+      { damage: 7, cooldownMs: 9000, count: 3, range: 2400, lifetimeMs: 7200, radius: 240, reHitMs: 7200 },
+      { damage: 7, cooldownMs: 9000, count: 3, range: 2400, lifetimeMs: 7200, radius: 240, reHitMs: 7200 },
     ],
   },
 };

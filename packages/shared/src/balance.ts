@@ -86,6 +86,9 @@ export const AI = {
   fleePanicDurationMs: 700,
   /** After flee expires, bias wander heading away from the last-known predator for this long. */
   fleeMemoryMs: 2500,
+  /** Center distance at which a piercing vehicle (car) triggers a panic dodge. Cars pierce every
+   *  fish, so AI of any size flees them like a lethal predator regardless of relative mass. */
+  carAvoidRadius: 750,
   /**
    * Mass ratio at which a nearby fish counts as a threat. Lower than FISH.eatRatio (1.15)
    * so the AI starts running before the other fish is technically eat-eligible — eliminates
