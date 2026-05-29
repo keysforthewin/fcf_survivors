@@ -238,6 +238,10 @@ body::after {
   right: 14px;
 }
 
+.death-gear svg {
+  transform: translateX(-1px);
+}
+
 .title-card .subtitle {
   margin: 0.7rem 0 0;
   color: var(--text-dim);
@@ -390,7 +394,7 @@ button.play:active { transform: translateY(0) scale(0.99); }
   font-size: 0.85rem;
 }
 
-.hud-left, .hud-right {
+.hud-left {
   background: var(--surface);
   padding: 9px 14px;
   border-radius: var(--radius-sm);
@@ -398,12 +402,9 @@ button.play:active { transform: translateY(0) scale(0.99); }
   backdrop-filter: var(--glass);
   border: 1px solid var(--stroke);
   box-shadow: var(--shadow-sm), var(--inset-hi);
-}
-
-.hud-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .hud-gear {
@@ -1350,7 +1351,7 @@ button.play:active { transform: translateY(0) scale(0.99); }
 /* === Roster === */
 .roster {
   position: fixed;
-  top: 64px;
+  top: 12px;
   right: 16px;
   width: 200px;
   background: var(--surface);

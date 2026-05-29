@@ -1627,10 +1627,6 @@ export class ArenaScene {
       this.hud.boost.textContent = "BOOST [Space]";
       this.hud.boost.classList.add("ready");
     }
-    // count living players
-    let players = 0;
-    for (const f of this.fishes.values()) if (!f.isAi) players++;
-    this.hud.players.textContent = players.toString();
     // re-roll / banish tokens — only shown when the player holds any.
     this.hud.rerolls.textContent = this.youRerolls.toString();
     this.hud.banishes.textContent = this.youBanishes.toString();
@@ -1946,7 +1942,6 @@ interface HudElements {
   root: HTMLElement;
   mass: HTMLElement;
   level: HTMLElement;
-  players: HTMLElement;
   xpFill: HTMLElement;
   boost: HTMLElement;
   skillSlots: SkillSlotEl[];
@@ -1963,18 +1958,13 @@ function mountHud(): HudElements {
   root.innerHTML = `
     <div class="hud">
       <div class="hud-left">
+        <button class="hud-gear" type="button" data-gear aria-label="Edit fish">${GEAR_SVG}</button>
         <div class="hud-stat">
           <div><div class="label">Mass</div><div class="value" data-mass>10</div></div>
           <div><div class="label">Level</div><div class="value" data-level>1</div></div>
           <div class="hud-token reroll" data-reroll-cell style="display:none"><div class="label">Re-roll</div><div class="value" data-rerolls>0</div></div>
           <div class="hud-token banish" data-banish-cell style="display:none"><div class="label">Banish</div><div class="value" data-banishes>0</div></div>
         </div>
-      </div>
-      <div class="hud-right">
-        <div class="hud-stat">
-          <div><div class="label">Players</div><div class="value" data-players>1</div></div>
-        </div>
-        <button class="hud-gear" type="button" data-gear aria-label="Edit fish">${GEAR_SVG}</button>
       </div>
     </div>
     <div class="hud-skills" data-skills>
@@ -2003,7 +1993,6 @@ function mountHud(): HudElements {
     root,
     mass: root.querySelector("[data-mass]") as HTMLElement,
     level: root.querySelector("[data-level]") as HTMLElement,
-    players: root.querySelector("[data-players]") as HTMLElement,
     xpFill: root.querySelector("[data-xp]") as HTMLElement,
     boost: root.querySelector("[data-boost]") as HTMLElement,
     skillSlots,
