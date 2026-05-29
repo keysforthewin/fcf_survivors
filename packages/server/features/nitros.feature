@@ -55,6 +55,7 @@ Feature: Nitro's Customs (vehicle weapon)
     Given a player "Driver" at (4000, 4000) with mass 100
     And "Driver" has weapon "nitros" at level 1
     And a player "A" at (4150, 4000) with mass 20
+    And "A" has heading (-1, 0)
     And a player "B" at (3850, 4000) with mass 20
     When the world advances 5 seconds
     Then "Driver" has at least 2 weapon hits

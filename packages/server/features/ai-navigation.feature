@@ -9,7 +9,9 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
   Scenario: A committed AI keeps its angered target instead of flipping to a closer one
     Given an AI fish "Hunter" at (4000, 4000) with mass 100 in "wander" mode
     And a player "PreyA" at (4200, 4000) with mass 10
+    And "PreyA" has heading (-1, 0)
     And a player "PreyB" at (4300, 4000) with mass 10
+    And "PreyB" has heading (-1, 0)
     And "Hunter" is angered at "PreyA"
     When the world advances 1 tick
     Then "Hunter" has target "PreyA"
@@ -20,6 +22,7 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
   Scenario: A stuck AI gives up its target and blacklists it
     Given an AI fish "Stuck" at (4000, 4000) with mass 100 in "chase" mode
     And a player "Bait" at (4200, 4000) with mass 10
+    And "Bait" has heading (-1, 0)
     When "Stuck" is held at (4000, 4000) for 75 ticks
     Then "Stuck" has no target
     And "Stuck" is in "wander" mode
@@ -28,6 +31,7 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
   Scenario: A blacklisted target is ignored even when in sight
     Given an AI fish "Stuck" at (4000, 4000) with mass 100 in "chase" mode
     And a player "Bait" at (4200, 4000) with mass 10
+    And "Bait" has heading (-1, 0)
     When "Stuck" is held at (4000, 4000) for 75 ticks
     Then "Stuck" has no target
     When the world advances 1 tick

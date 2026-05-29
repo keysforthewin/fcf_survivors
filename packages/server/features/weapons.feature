@@ -11,6 +11,7 @@ Feature: Weapon damage
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 1
     And an AI fish "Minnow" at (4150, 4000) with mass 25
+    And "Minnow" has heading (-1, 0)
     When the world advances 1 tick
     Then "Minnow" is alive
     And "Minnow" has mass approximately 24

@@ -83,3 +83,12 @@ export const PASSIVE_IDS: PassiveId[] = ["fin", "gulp", "scales", "teeth", "refl
 export function stackedMult(perStack: number, stack: number): number {
   return Math.pow(perStack, stack);
 }
+
+/**
+ * Close Encounters eating-range multiplier for a given stack count. Single source of truth so the
+ * server (getEatRangeMult) and the client (own-fish bite prediction) scale eat reach identically.
+ * Stack 0 = 1.0 (base reach), scaling up by +20% per stack.
+ */
+export function eatRangeMultForStack(stack: number): number {
+  return stackedMult(PASSIVES.closeEncounters.perStack, stack);
+}

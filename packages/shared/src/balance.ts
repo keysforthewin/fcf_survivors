@@ -207,6 +207,12 @@ export const MOUTH = {
   // governs the *bonus reach* that vacuums prey in from in front — the eat itself is
   // omnidirectional. A few px of margin makes "just touching" feel responsive.
   contactMargin: 6,
+  // Behind-approach reach: when a predator is in its target's REAR arc and pointed at it
+  // (i.e. chasing it from behind), the engage distance for eat/bite/nibble extends far past
+  // contact. Scaled by Close Encounters for players (AI gets the base). This is what lets a
+  // chase actually land — fleeing prey is, by definition, approached from behind.
+  behindCos: 0.4,          // rear-arc threshold on the TARGET's heading (~133° arc). aheadDot <= -behindCos = behind.
+  behindReachBonus: 140,   // base extra px (added to rA+rB+contactMargin) for a behind approach, before the passive mult.
 } as const;
 
 /**

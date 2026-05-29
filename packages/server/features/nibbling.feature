@@ -27,6 +27,18 @@ Feature: Nibbling a bigger fish
     When the world advances 5 ticks
     Then "Whale" has at least mass 99
 
+  Scenario: A smaller fish can nibble a bigger one from behind past normal contact range
+    # Whale swims +x; Minnow chases 120px behind it — past the ~105px contact span for these masses,
+    # so only the behind-approach reach lets the nibble land. One nibble (level 1) drains 0.8 mass.
+    Given a player "Whale" at (1000, 1000) with mass 100
+    And "Whale" has heading (1, 0)
+    And a player "Minnow" at (880, 1000) with mass 20
+    And "Minnow" has heading (1, 0)
+    When the world advances 1 tick
+    Then "Whale" is alive
+    And "Whale" has at most mass 99.5
+    And "Whale" has at least mass 99
+
   Scenario: A bigger fish does not nibble the smaller fish it is touching
     # Only the smaller fish nibbles. Whale (bigger) touching Minnow from behind neither eats nor
     # nibbles it — Whale takes the bite damage, Minnow takes none.

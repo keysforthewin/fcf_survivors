@@ -21,6 +21,7 @@ Feature: AI fish behaviour
   Scenario: An AI commits to chasing edible prey that loiters in its aggro radius
     Given an AI fish "Big" at (4000, 4000) with mass 100 in "wander" mode
     And a player "Tiny" at (4200, 4000) with mass 10
+    And "Tiny" has heading (-1, 0)
     When "Big" is held at (4000, 4000) for 25 ticks
     Then "Big" is in "chase" mode
     And "Big" has target "Tiny"

@@ -48,3 +48,24 @@ Feature: Front-of-face eating with front suction
     And a player "Beta" at (905, 1000) with mass 10
     When the world advances 4 ticks
     Then "Beta" is alive
+
+  Scenario: Chasing prey from BEHIND lets you eat it from far past contact range
+    # Beta swims +x; Alpha is 150px behind it (well past the ~103px front-suction reach for mass
+    # 50) and pointed at it. Approaching from the target's rear extends the engage distance, so the
+    # chase lands.
+    Given a player "Beta" at (1000, 1000) with mass 10
+    And "Beta" has heading (1, 0)
+    And a player "Alpha" at (850, 1000) with mass 50
+    And "Alpha" has heading (1, 0)
+    When the world advances 2 ticks
+    Then "Beta" is dead
+
+  Scenario: The same 150px gap from the prey's FRONT does not eat (behind-only bonus)
+    # Beta faces Alpha (heading -x); Alpha is in Beta's front arc, not its rear, so there is no
+    # behind bonus and 150px is beyond the front-suction reach.
+    Given a player "Beta" at (1000, 1000) with mass 10
+    And "Beta" has heading (-1, 0)
+    And a player "Alpha" at (850, 1000) with mass 50
+    And "Alpha" has heading (1, 0)
+    When the world advances 2 ticks
+    Then "Beta" is alive

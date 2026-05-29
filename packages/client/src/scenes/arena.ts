@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, canSwallow, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, canSwallow, colorForSpecies, eatRangeMultForStack, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -1179,12 +1179,28 @@ export class ArenaScene {
     const rSelf = fishRadius(this.youMass);
     const cx = this.selfRenderX;
     const cy = this.selfRenderY;
+    // Behind-approach reach scales with our Close Encounters stacks — mirror the server's mult.
+    const ce = this.youPassives.find((p) => p.id === "closeEncounters");
+    const eatMult = ce ? eatRangeMultForStack(ce.stack) : 1;
+    const selfMoving = Math.hypot(this.selfHx, this.selfHy) > 0.01;
     for (const f of this.fishes.values()) {
       if (f.id === this.selfId) continue;
       const dx = f.sprite.container.x - cx;
       const dy = f.sprite.container.y - cy;
       const dist = Math.hypot(dx, dy);
-      if (dist > rSelf + fishRadius(f.mass) + BITE.contactPad) continue; // not in contact
+      // Chasing prey from behind extends our reach far past contact (matches the server). `dx/dy`
+      // are target − self, so aheadDot = targetHeading · unit(self − target); <= -behindCos = behind.
+      let behindReach = 0;
+      const h = this.fishHeading.get(f.id);
+      if (h && selfMoving && dist > 0.001) {
+        const bMag = Math.hypot(h.hx, h.hy);
+        const dot = (this.selfHx * dx + this.selfHy * dy) / dist;
+        if (bMag >= MOUTH.stationaryHeadingEps && dot >= MOUTH.coneCos) {
+          const aheadDot = (h.hx * -dx + h.hy * -dy) / (bMag * dist);
+          if (aheadDot <= -MOUTH.behindCos) behindReach = MOUTH.behindReachBonus * eatMult;
+        }
+      }
+      if (dist > rSelf + fishRadius(f.mass) + BITE.contactPad + behindReach) continue; // not in contact
       if (canSwallow(this.youMass, f.mass)) {
         // Eating requires facing the prey (front cone) — matches the server's front-of-face rule.
         const dot = dist > 0.001 ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;

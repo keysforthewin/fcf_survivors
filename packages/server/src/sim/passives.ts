@@ -1,4 +1,4 @@
-import { FISH, PASSIVES, SLOW, MAX_FISH_RADIUS_PAD, massSpeedMult, stackedMult, sybexRadius, sybexSlowMult } from "@fcf/shared";
+import { FISH, PASSIVES, SLOW, MAX_FISH_RADIUS_PAD, massSpeedMult, stackedMult, eatRangeMultForStack, sybexRadius, sybexSlowMult } from "@fcf/shared";
 import type { PassiveId } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -85,7 +85,7 @@ export function getFishEatMass(baseGain: number, fish: Fish): number {
 
 /** Multiplier on the forward eating reach (Close Encounters). >1 lets you grab prey from farther. */
 export function getEatRangeMult(fish: Fish): number {
-  return effectMult(fish, "closeEncounters");
+  return eatRangeMultForStack(stack(fish, "closeEncounters"));
 }
 
 /** Flat weapon-damage bonus added to each hit (Mmiguel's Aim, +1/stack). */

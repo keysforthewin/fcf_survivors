@@ -606,11 +606,13 @@ export class World {
       // Close Encounters pushes the suction mouth-point farther forward and widens the bite
       // zone. `grab` is 0 without the passive (and for AI). It scales only the front SUCTION
       // reach below — the contact-eat is omnidirectional and ignores it.
-      const grab = MOUTH.reachBonus * ((a.isAi ? 1 : getEatRangeMult(a)) - 1);
+      const eatMult = a.isAi ? 1 : getEatRangeMult(a);
+      const grab = MOUTH.reachBonus * (eatMult - 1);
       // Query wide enough to catch contact with the largest plausible neighbour. A tiny fish
       // nibbling a huge one needs rB (up to MAX_FISH_RADIUS_PAD) in the radius, not 2·rA — that
-      // only covers prey smaller than the actor. Also covers the forward suction zone.
-      const reach = rA + MAX_FISH_RADIUS_PAD + MOUTH.suctionExtraRadius + MOUTH.reachBonus + grab * 2;
+      // only covers prey smaller than the actor. Also covers the forward suction zone and the
+      // (much larger) behind-approach reach below.
+      const reach = rA + MAX_FISH_RADIUS_PAD + MOUTH.suctionExtraRadius + MOUTH.reachBonus + grab * 2 + MOUTH.behindReachBonus * eatMult;
       scratch.length = 0;
       this.fishHash.query(a.x, a.y, reach, scratch);
       const headingMag = Math.hypot(a.headingX, a.headingY);
@@ -623,7 +625,18 @@ export class World {
         const dy = b.y - a.y;
         const dist = Math.hypot(dx, dy);
         const rB = fishRadius(b.mass);
-        const inContact = dist <= rA + rB + MOUTH.contactMargin;
+        // Attacker's facing toward this target (reused by the front-cone + behind checks).
+        const dot = (!stationary && dist > 0.001) ? (hx * dx + hy * dy) / dist : 1;
+        // Behind-approach reach: if `a` is in `b`'s REAR arc AND pointed at it (a chase), the
+        // engage distance extends far past contact — scaled by Close Encounters for players, base
+        // for AI. `aheadDot` is b-heading · unit(a − b): +1 = a in front of b, −1 = directly behind.
+        let behindReach = 0;
+        const bMag = Math.hypot(b.headingX, b.headingY);
+        if (!stationary && dist > 0.001 && bMag >= MOUTH.stationaryHeadingEps && dot >= MOUTH.coneCos) {
+          const aheadDot = (b.headingX * -dx + b.headingY * -dy) / (bMag * dist);
+          if (aheadDot <= -MOUTH.behindCos) behindReach = MOUTH.behindReachBonus * eatMult;
+        }
+        const inContact = dist <= rA + rB + MOUTH.contactMargin + behindReach;
         // Spawn protection: a freshly (re)spawned player can't be eaten OR nibbled for a window.
         const protectedB = !!(b.spawnProtectedUntil && now < b.spawnProtectedUntil);
 
@@ -632,7 +645,6 @@ export class World {
           // fish only eats prey inside its forward mouth cone; a fish with no heading (truly
           // stationary) still eats on any-angle contact since it has no cone to face with.
           if (protectedB) continue;
-          const dot = (!stationary && dist > 0.001) ? (hx * dx + hy * dy) / dist : 1;
           const inFrontCone = stationary || dot >= MOUTH.coneCos;
           let eat = inContact && inFrontCone;
 
@@ -699,7 +711,6 @@ export class World {
           // soften b until a is 1.15× bigger and the next contact swallows it whole. Uses its OWN
           // cooldown (lastBiteAt) so it never stomps / is stomped by the nibble cooldown.
           if (protectedB || !inContact) continue;
-          const dot = (!stationary && dist > 0.001) ? (hx * dx + hy * dy) / dist : 1;
           if (!(stationary || dot >= MOUTH.coneCos)) continue;
           const last = a.lastBiteAt ?? 0;
           if (now - last < BITE.cooldownMs) continue;
