@@ -9,7 +9,7 @@ export interface WeaponSlot {
    * {phase, projectileIds}. Radial-burst (Turret) uses {startedAt, firedCount}
    * while a ring is mid-sweep. Flyby (Alien Friends) tracks its in-flight ships.
    */
-  state?: TrailState | OrbitalState | BurstSweepState | FlybyState;
+  state?: TrailState | OrbitalState | BurstSweepState | FlybyState | HeliState;
 }
 
 export interface TrailState {
@@ -45,6 +45,23 @@ export interface BurstSweepState {
 export interface FlybyState {
   kind: "flyby";
   ships: { projId: number; lastFireAt: number }[];
+}
+
+/**
+ * Tracks the single minicopter a heli weapon currently has in the air. The body is a
+ * damage-0 linear projectile steered toward a loiter waypoint around the player; it
+ * auto-expires after the weapon's lifetimeMs. Bullets are fired off `lastFireAt`.
+ * Re-summons once `ship` clears and the cooldown has elapsed.
+ */
+export interface HeliState {
+  kind: "heli";
+  ship: {
+    projId: number;
+    lastFireAt: number;
+    waypointX: number;
+    waypointY: number;
+    nextWaypointAt: number;
+  } | null;
 }
 
 export type PassiveId =
@@ -101,6 +118,8 @@ export interface Fish {
    * Set on (re)spawn for players so any-contact eating doesn't instantly chomp a fresh fish.
    */
   spawnProtectedUntil?: number;
+  /** Wall-time until which this fish moves at SLOW.mult speed (Battle Comms debuff). 0/undefined = not slowed. */
+  slowUntil?: number;
   boost: boolean;
   boostUntil: number;
   boostReadyAt: number;
@@ -255,6 +274,8 @@ export interface Projectile {
   radius: number;
   expiresAt: number;
   behavior: ProjectileBehavior;
+  /** Heli weapons only: true for the minicopter BODY (damage 0), false/undefined for its bullets. Drives client sprite choice. */
+  isBody?: boolean;
   /** Per-target last-hit timestamp for orbital/trail/pulse re-hit gating. */
   hits: Map<EntityId, number>;
   reHitMs: number;

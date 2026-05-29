@@ -209,6 +209,7 @@ export class World {
     reHitMs: number;
     orbitPhase?: number;
     orbitRadius?: number;
+    isBody?: boolean;
   }): Projectile {
     if (this.projectiles.size >= MAX_PROJECTILES) {
       // Silent drop on cap. Reuse the requested id so callers don't crash.
@@ -224,6 +225,7 @@ export class World {
         reHitMs: opts.reHitMs,
         orbitPhase: opts.orbitPhase,
         orbitRadius: opts.orbitRadius,
+        isBody: opts.isBody,
       };
       return dummy;
     }
@@ -241,6 +243,7 @@ export class World {
       reHitMs: opts.reHitMs,
       orbitPhase: opts.orbitPhase,
       orbitRadius: opts.orbitRadius,
+      isBody: opts.isBody,
     };
     this.projectiles.set(proj.id, proj);
     return proj;

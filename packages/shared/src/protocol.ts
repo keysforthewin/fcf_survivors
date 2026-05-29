@@ -138,6 +138,8 @@ export interface EntityDelta {
   species?: string;
   /** Fish only (transient, set only on the tick this fish swallowed prey whole): drives the eat chomp/lurch anim. */
   biting?: boolean;
+  /** Projectile only (first-seen): true for a heli BODY (vs. its bullets) so the client renders a heli sprite. */
+  body?: boolean;
   /** Fish only (transient, set only on the tick this fish nibbled a bigger fish): drives the quick nip anim. */
   nibbling?: boolean;
   /** Chunk only (first-seen): XP payload of an XP ball — a swallow's gold ball or a death-drop
