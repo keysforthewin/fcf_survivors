@@ -262,31 +262,31 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
     }
     // While dismissed, let movement keys reach the game.
     if (dismissed) return;
+    // The modal is non-blocking: navigation keys also steer the fish. We highlight the
+    // card here but DON'T stopPropagation, so the same keydown still reaches input.ts and
+    // drives movement (the menu and the swim share left/right). We only preventDefault to
+    // suppress page scroll — input.ts already does the same for arrows.
     if (k === "a" || k === "A" || k === "ArrowLeft") {
       e.preventDefault();
-      e.stopPropagation();
       inputMode = "keyboard";
       setHighlight(Math.max(0, highlighted - 1));
       return;
     }
     if (k === "d" || k === "D" || k === "ArrowRight") {
       e.preventDefault();
-      e.stopPropagation();
       inputMode = "keyboard";
       setHighlight(Math.min(cardEls.length - 1, highlighted + 1));
       return;
     }
+    // Space/Enter pick the highlighted card. stopPropagation keeps Space from also
+    // triggering boost in input.ts while the menu is visible (boost returns once dismissed).
     if (k === " " || k === "Spacebar" || k === "Space" || k === "Enter") {
       e.preventDefault();
       e.stopPropagation();
       pick(highlighted);
       return;
     }
-    // Swallow other movement keys so they don't leak into the underlying game.
-    if (["ArrowUp", "ArrowDown", "w", "W", "s", "S"].includes(k)) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    // Up/down/W/S aren't menu keys — let them fall through to drive vertical movement.
   };
   window.addEventListener("keydown", onKey, true);
 

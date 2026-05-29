@@ -238,15 +238,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   gunship: {
-    id: "gunship", name: "Sky King's Apache", description: "A Rust Apache gunship — dual miniguns, rapid fire, longer patrols.",
+    id: "gunship", name: "Sky King's Apache", description: "A Rust Apache gunship — dual miniguns, rapid fire, short ferocious strafes.",
     kind: "heli", evolutionOf: "heli",
     levels: [
-      // Dual-minigun: 2 bullets/burst with a slight spread; rapid 300ms cadence; 10s uptime, 16s cooldown.
-      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
-      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
-      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
-      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
-      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 10000, speed: 560, radius: 18, spread: 0.18 },
+      // Dual-minigun: 2 bullets/burst with a slight spread; rapid 300ms cadence; 5s uptime, 16s cooldown.
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
+      { damage: 7, cooldownMs: 16000, count: 2, range: 2400, intervalMs: 300, lifetimeMs: 5000, speed: 560, radius: 18, spread: 0.18 },
     ],
   },
 };

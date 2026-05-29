@@ -93,6 +93,9 @@ interface ProjectileState {
   orbitAngle: number;
   orbitAngular: number;
   orbitRadius: number;
+  /** Heli body only: the smoothed nose angle (rad), re-sent each tick. Rotates the sprite to where it
+   *  aims, decoupled from its travel direction. Absent for ordinary projectiles (they rotate to velocity). */
+  facing?: number;
   radius: number;
   weaponId: string;
   /** performance.now() of first-seen — drives sprite age fades. */
@@ -525,8 +528,9 @@ export class ArenaScene {
    * Advance the client-authoritative self fish with a fixed-timestep accumulator: consume
    * wall-clock time in TICK.ms chunks running the shared movement integrator. Rendering
    * (in tick) interpolates between selfPrev and self by the leftover-accumulator fraction,
-   * which makes motion perfectly smooth and framerate-independent. Boost and the level-up
-   * freeze are owned locally — there is no server to reconcile against.
+   * which makes motion perfectly smooth and framerate-independent. Boost is owned
+   * locally — there is no server to reconcile against. The level-up modal is non-blocking,
+   * so movement keeps running while it's open.
    */
   private stepSelf(dtMs: number): void {
     if (!this.self) return;
@@ -540,18 +544,17 @@ export class ArenaScene {
     this.prevBoostHeld = held;
     const boostMult = estServerNow < this.selfBoostUntil ? FISH.boostMultiplier : 1;
     const slowMult = estServerNow < this.youSlowUntil ? SLOW.mult : 1;
-    // Movement intent (normalized exactly as the server does), zeroed while the modal is open.
+    // Movement intent (normalized exactly as the server does). The level-up modal is
+    // non-blocking — the player keeps swimming while it's open, so intent is never zeroed.
     let ivx = this.input.state.vx;
     let ivy = this.input.state.vy;
     const mag = Math.hypot(ivx, ivy);
     if (mag > 1) { ivx /= mag; ivy /= mag; }
-    const frozen = !!this.levelUpMount && !this.levelUpMount.isDismissed();
-    if (frozen) { ivx = 0; ivy = 0; }
     // Consume a pending bite lunge (armed by detectBites on contact with edible prey): a one-shot
     // forward velocity bump along the reported heading. It flows through the same shared physics
     // the server trusts (reported via the input message), then decays via stepFishMovement's
     // smoothing — a real catch-up dash, not just a visual.
-    if (this.pendingLunge > 0 && !frozen) {
+    if (this.pendingLunge > 0) {
       this.self.vx += this.selfHx * this.pendingLunge;
       this.self.vy += this.selfHy * this.pendingLunge;
       this.pendingLunge = 0;
@@ -1050,6 +1053,7 @@ export class ArenaScene {
         vx: ent.vx ?? 0, vy: ent.vy ?? 0,
         ownerId,
         orbitAngle: orbit.angle, orbitAngular: orbit.angular, orbitRadius: orbit.radius,
+        facing: ent.facing,
         radius,
         weaponId,
         spawnTime: spawnNow,
@@ -1066,6 +1070,7 @@ export class ArenaScene {
     p.lastY = ent.y;
     if (ent.vx !== undefined) p.vx = ent.vx;
     if (ent.vy !== undefined) p.vy = ent.vy;
+    if (ent.facing !== undefined) p.facing = ent.facing;
     if (p.mode === "orbital") {
       const orbit = this.readOrbit(ent, p.ownerId);
       p.orbitAngle = orbit.angle;
@@ -1379,7 +1384,13 @@ export class ArenaScene {
     for (const p of this.projectiles.values()) {
       if (p.mode === "linear") {
         const pos = deadReckon(p.lastX, p.lastY, p.vx, p.vy, presentServerTime - p.lastT, PROJ_MAX_EXTRAP_MS);
-        p.sprite.setTransform(pos.x, pos.y, p.vx, p.vy);
+        // Heli body carries a facing (where it's aiming) decoupled from travel — rotate to that. The
+        // ×100 just clears setTransform's vx²+vy²>1 guard; position still dead-reckons from real vx/vy.
+        if (p.facing !== undefined) {
+          p.sprite.setTransform(pos.x, pos.y, Math.cos(p.facing) * 100, Math.sin(p.facing) * 100);
+        } else {
+          p.sprite.setTransform(pos.x, pos.y, p.vx, p.vy);
+        }
       } else {
         // orbital: advance the angle continuously from the descriptor (re-anchored each
         // snapshot, extrapolated at the angular velocity between) and place it on the owner's

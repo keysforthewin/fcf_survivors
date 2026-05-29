@@ -49,18 +49,31 @@ export interface FlybyState {
 
 /**
  * Tracks the single minicopter a heli weapon currently has in the air. The body is a
- * damage-0 linear projectile steered toward a loiter waypoint around the player; it
- * auto-expires after the weapon's lifetimeMs. Bullets are fired off `lastFireAt`.
- * Re-summons once `ship` clears and the cooldown has elapsed.
+ * damage-0 linear projectile that flies a 3-phase patrol: `enter` (streak in from a
+ * screen edge), `attack` (loiter around the player, nose tracking enemies, firing the
+ * lead-aimed AK only when aligned), `exit` (peel off and leave through an edge). `heading`
+ * is the smoothed nose angle (rad) — written to the body's `facing` each tick and used to
+ * orient the sprite + aim bullets. Re-summons once `ship` clears and the cooldown elapses.
  */
 export interface HeliState {
   kind: "heli";
   ship: {
     projId: number;
+    phase: "enter" | "attack" | "exit";
+    heading: number;
     lastFireAt: number;
-    waypointX: number;
-    waypointY: number;
+    /** Desired loiter position as an OFFSET from the player (added to fish.x/y each tick), so the
+     *  target tracks the player instead of going stale when they move (see tickHeli). */
+    offX: number;
+    offY: number;
     nextWaypointAt: number;
+    /** Wall-time the attack phase ends → switch to exit. Set on the enter→attack transition. */
+    attackUntil: number;
+    /** Fixed outward direction (unit vector) the body streaks along during exit. A constant heading
+     *  (not a finite point) means it never stops/bounces, so a chasing player can't pin it on screen;
+     *  it's removed once it leaves the arena or the player's view. */
+    exitDx: number;
+    exitDy: number;
   } | null;
 }
 
@@ -276,6 +289,9 @@ export interface Projectile {
   behavior: ProjectileBehavior;
   /** Heli weapons only: true for the minicopter BODY (damage 0), false/undefined for its bullets. Drives client sprite choice. */
   isBody?: boolean;
+  /** Heli body only, refreshed each tick: the smoothed nose angle (rad). Shipped in the snapshot so the
+   *  client rotates the sprite to where the heli is aiming (not just its travel direction). */
+  facing?: number;
   /** Per-target last-hit timestamp for orbital/trail/pulse re-hit gating. */
   hits: Map<EntityId, number>;
   reHitMs: number;

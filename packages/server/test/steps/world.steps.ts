@@ -150,6 +150,18 @@ Given(
   }
 );
 
+// A chunk with a deterministic outward velocity, for testing that XP balls can't
+// drift out through an arena wall (spawnChunk picks a random direction otherwise).
+Given(
+  "a chunk at \\({float}, {float}\\) with mass {float} moving \\({float}, {float}\\)",
+  function (this: TestWorld, x: number, y: number, mass: number, vx: number, vy: number) {
+    const sim = ensureSim(this);
+    const c = sim.world.spawnChunk(x, y, mass, "#ffdf80", sim.clock.now());
+    c.vx = vx;
+    c.vy = vy;
+  }
+);
+
 // Directly invoke the death-drop scatter (the real trigger lives in the server tick loop in
 // index.ts, which the world-only harness doesn't run — mirrors how "a chunk at" calls spawnChunk).
 Given(

@@ -374,16 +374,10 @@ export class World {
   }
 
   /**
-   * Apply input to a player fish. While a level-up modal is open AND the player
-   * has not dismissed it, the fish brakes to zero so the player can't move
-   * while choosing. Dismissing the modal (ESC / skip button) lifts the freeze.
+   * Apply input to a player fish. The level-up modal is non-blocking: the player
+   * keeps swimming (and firing) while it's open, so input is always honored.
    */
   applyInput(fish: Fish, vx: number, vy: number, boost: boolean, now: number): void {
-    if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) {
-      fish.targetVx = 0;
-      fish.targetVy = 0;
-      return;
-    }
     fish.targetVx = vx;
     fish.targetVy = vy;
     if (boost && now >= fish.boostReadyAt) {
@@ -415,13 +409,6 @@ export class World {
       fish.boostReadyAt = now + getBoostCooldown(fish);
     }
     fish.clientAuthoritative = true;
-    // Mirror the movement freeze: ignore reported position while the level-up modal
-    // is open and not dismissed (the client enforces this too, this is belt-and-braces).
-    if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) {
-      fish.vx = 0;
-      fish.vy = 0;
-      return;
-    }
     fish.x = s.x;
     fish.y = s.y;
     fish.vx = s.vx;
@@ -495,6 +482,11 @@ export class World {
       c.y += c.vy * dtSec;
       c.vx *= 0.94;
       c.vy *= 0.94;
+      // Pin XP balls inside the arena: a chunk spawned at the edge (a death-drop scatter
+      // or a forward burp spray) carries outward velocity and would otherwise drift out
+      // of bounds. Reuse the fish clamp — it pins the center inside (the small radius pad
+      // keeps the ball visible) and kills the wall-ward velocity so it rests, not jitters.
+      clampToArena(c, c.mass);
       if (now >= c.expiresAt) this.removeChunk(c.id);
     }
 

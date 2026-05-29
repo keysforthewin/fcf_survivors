@@ -1,4 +1,4 @@
-import { WEAPONS, getWeaponLevel, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius, battleCommsSlowMs } from "@fcf/shared";
+import { WEAPONS, getWeaponLevel, ARENA, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius, battleCommsSlowMs } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
 import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState, HeliState } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -7,10 +7,17 @@ import { getWeaponDamageBonus, getWeaponCooldownMult, getDamageTakenReduction } 
 /** Every hit always lands at least this much, so flat armor (Full Metal) can't fully nullify a weapon. */
 const MIN_HIT_DAMAGE = 1;
 
-/** Heli body sprite/collision radius (it deals no damage; this is just its size). */
-const HELI_BODY_RADIUS = 48;
-/** Speed (units/sec) the heli body cruises toward its loiter waypoint. */
-const HELI_CRUISE_SPEED = 320;
+/** Heli body sprite/collision radius (it deals no damage; this is just its size). 2× for visibility. */
+const HELI_BODY_RADIUS = 96;
+/** Speed (units/sec) the heli body cruises toward its loiter waypoint while attacking. Set above the
+ *  player's base move speed (320) so it keeps station on a moving player; the body is harmless. */
+const HELI_CRUISE_SPEED = 420;
+/** Speed (units/sec) the heli body flies during enter/exit transit — fast, so it streaks in/out. */
+const HELI_TRANSIT_SPEED = 1200;
+/** How fast (rad/sec) the nose slews toward its target heading — a real-heli banking turn. */
+const HELI_TURN_RATE = 8;
+/** Fire only when the nose is within this many rad of the lead-aim angle (so it shoots where it faces). */
+const HELI_FIRE_ALIGN = 0.45;
 /** Loiter ring (min/max radius) the heli picks waypoints within, around the player. */
 const HELI_WAYPOINT_MIN_R = 180;
 const HELI_WAYPOINT_MAX_R = 420;
@@ -18,8 +25,28 @@ const HELI_WAYPOINT_MAX_R = 420;
 const HELI_REPICK_MS = 1500;
 /** Re-pick once the body gets within this distance of its waypoint. */
 const HELI_ARRIVE_DIST = 60;
-/** Heli AK bullet lifetime (ms) — separate from the heli's own uptime. */
-const HELI_BULLET_LIFETIME_MS = 2500;
+/** Heli AK bullet lifetime (ms) — separate from the heli's own uptime. Long enough to span the screen. */
+const HELI_BULLET_LIFETIME_MS = 4000;
+/** Backstop padding (ms) added to the body projectile's expiry to cover transit time around the attack window. */
+const HELI_ENTER_MAX_MS = 4000;
+const HELI_EXIT_MAX_MS = 4000;
+/** Fixed sim step (matches tickOrbital) — used for the heading slew. */
+const HELI_DT = 1 / 20;
+
+/** Shortest signed angular difference a→b, in (-π, π]. */
+function angDiff(a: number, b: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/** Slew `cur` toward `target` by at most `maxStep` rad, along the shortest path. */
+function slewAngle(cur: number, target: number, maxStep: number): number {
+  const d = angDiff(cur, target);
+  if (Math.abs(d) <= maxStep) return target;
+  return cur + Math.sign(d) * maxStep;
+}
 
 /**
  * On-screen test: is (x, y) within the owner's view radius? Mirrors the snapshot
@@ -116,7 +143,6 @@ export function applyNibble(target: Fish, attacker: Fish, damage: number): void 
  */
 export function tryFireWeapons(world: World, fish: Fish, now: number): void {
   if (!fish.alive || fish.isAi) return;
-  if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) return;
 
   const cdMult = getWeaponCooldownMult(fish);
   const dmgBonus = getWeaponDamageBonus(fish);
@@ -571,15 +597,34 @@ function ensureHeliState(slot: WeaponSlot): HeliState {
   return s;
 }
 
-function pickHeliWaypoint(world: World, fish: Fish): { x: number; y: number } {
+/** A loiter OFFSET (relative to the player) on the ring [MIN_R, MAX_R]. Added to the live player
+ *  position each tick so the target tracks the player instead of going stale when they move. */
+function pickHeliWaypoint(world: World): { dx: number; dy: number } {
   const ang = world.rng() * Math.PI * 2;
   const r = HELI_WAYPOINT_MIN_R + world.rng() * (HELI_WAYPOINT_MAX_R - HELI_WAYPOINT_MIN_R);
-  return { x: fish.x + Math.cos(ang) * r, y: fish.y + Math.sin(ang) * r };
+  return { dx: Math.cos(ang) * r, dy: Math.sin(ang) * r };
+}
+
+/** A point on/just past the player's screen edge, in a random direction (for enter/exit). */
+function pickHeliEdgePoint(world: World, fish: Fish, distMult: number): { x: number; y: number; ang: number } {
+  const ang = world.rng() * Math.PI * 2;
+  const r = viewRadius(fish.mass) * distMult;
+  return { x: fish.x + Math.cos(ang) * r, y: fish.y + Math.sin(ang) * r, ang };
+}
+
+/** Steer the body toward (tx, ty) at `speed`, writing vx/vy that integrate next tick. */
+function steerHeli(proj: Projectile, tx: number, ty: number, speed: number): void {
+  const dx = tx - proj.x;
+  const dy = ty - proj.y;
+  const mag = Math.hypot(dx, dy) || 1;
+  proj.vx = (dx / mag) * speed;
+  proj.vy = (dy / mag) * speed;
 }
 
 /**
- * Mortal's Heli: summon a minicopter (a damage-0 linear projectile) that loiters around the
- * player, then fires a lead-aimed AK bullet at the nearest on-screen fish every intervalMs.
+ * Mortal's Heli: summon a minicopter (a damage-0 linear projectile) that streaks in from a screen
+ * edge (`enter`), loiters around the player while turning its nose onto enemies and firing a
+ * lead-aimed AK only when aligned (`attack`), then peels off and leaves through an edge (`exit`).
  * Sets its own cooldownReadyAt (like tickFlyby) so the HUD shows the real next-summon countdown.
  */
 function tickHeli(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number, cdMult: number): void {
@@ -587,26 +632,42 @@ function tickHeli(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, 
   // Drop the ship once its body projectile has expired/been removed.
   if (state.ship && !world.projectiles.has(state.ship.projId)) state.ship = null;
 
-  // Summon when none is up and the cooldown has elapsed.
+  // Summon when none is up and the cooldown has elapsed: spawn off a random screen edge,
+  // aimed inward toward a first loiter waypoint, and fly in fast.
   if (!state.ship && now >= slot.cooldownReadyAt) {
     const lifetimeMs = lvl.lifetimeMs ?? 8000;
-    const start = pickHeliWaypoint(world, fish);
+    const entry = pickHeliEdgePoint(world, fish, 1.0);
+    const wp = pickHeliWaypoint(world);
     const proj = world.spawnProjectile({
       ownerId: fish.id,
       weaponId: slot.id,
-      x: start.x,
-      y: start.y,
+      x: entry.x,
+      y: entry.y,
       vx: 0,
       vy: 0,
       damage: 0,                 // the body is harmless; its bullets deal the damage
       radius: HELI_BODY_RADIUS,
-      expiresAt: now + lifetimeMs,
+      // Generous backstop: enter + on-station + exit. Normal completion removes it explicitly in `exit`.
+      expiresAt: now + HELI_ENTER_MAX_MS + lifetimeMs + HELI_EXIT_MAX_MS,
       behavior: "linear",
       reHitMs: 0,
       isBody: true,
     });
     if (proj.id >= 0) {
-      state.ship = { projId: proj.id, lastFireAt: now, waypointX: start.x, waypointY: start.y, nextWaypointAt: now + HELI_REPICK_MS };
+      const heading = Math.atan2(fish.y - entry.y, fish.x - entry.x); // nose toward the arena
+      proj.facing = heading;
+      state.ship = {
+        projId: proj.id,
+        phase: "enter",
+        heading,
+        lastFireAt: now,
+        offX: wp.dx,
+        offY: wp.dy,
+        nextWaypointAt: now + HELI_REPICK_MS,
+        attackUntil: 0,
+        exitDx: 0,
+        exitDy: 0,
+      };
     }
     slot.cooldownReadyAt = now + (lvl.cooldownMs ?? 20000) * cdMult;
   }
@@ -616,28 +677,98 @@ function tickHeli(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, 
   const proj = world.projectiles.get(ship.projId);
   if (!proj) { state.ship = null; return; }
 
-  // Re-pick a loiter waypoint periodically or on arrival, so the heli keeps tracking the player.
-  const dwx = proj.x - ship.waypointX;
-  const dwy = proj.y - ship.waypointY;
-  if (now >= ship.nextWaypointAt || dwx * dwx + dwy * dwy < HELI_ARRIVE_DIST * HELI_ARRIVE_DIST) {
-    const wp = pickHeliWaypoint(world, fish);
-    ship.waypointX = wp.x;
-    ship.waypointY = wp.y;
-    ship.nextWaypointAt = now + HELI_REPICK_MS;
+  const distToPlayer = Math.hypot(proj.x - fish.x, proj.y - fish.y);
+
+  // Loiter target follows the player: the stored offset added to the LIVE player position. This is
+  // what fixes the "stuck bouncing on a dead spot when the player moves" bug — the target never
+  // goes stale, so the body always converges to the ring around wherever the player is now.
+  if (ship.phase === "enter") {
+    // Fly fast toward the first loiter target; nose follows travel. Begin attacking once the body
+    // reaches the loiter ring — gate on the live player OR on reaching the target, so it can never
+    // get trapped in `enter` (the old `distToPlayer`-only gate never fired once the player moved off).
+    const tx = fish.x + ship.offX;
+    const ty = fish.y + ship.offY;
+    steerHeli(proj, tx, ty, HELI_TRANSIT_SPEED);
+    const dtx = proj.x - tx;
+    const dty = proj.y - ty;
+    const reachedTarget = dtx * dtx + dty * dty < HELI_WAYPOINT_MAX_R * HELI_WAYPOINT_MAX_R;
+    if (distToPlayer < HELI_WAYPOINT_MAX_R || reachedTarget) {
+      ship.phase = "attack";
+      ship.attackUntil = now + (lvl.lifetimeMs ?? 8000);
+    }
+  } else if (ship.phase === "attack") {
+    // Loiter: re-pick an offset periodically or on arrival so the heli keeps circling the player.
+    let tx = fish.x + ship.offX;
+    let ty = fish.y + ship.offY;
+    const dtx = proj.x - tx;
+    const dty = proj.y - ty;
+    if (now >= ship.nextWaypointAt || dtx * dtx + dty * dty < HELI_ARRIVE_DIST * HELI_ARRIVE_DIST) {
+      const wp = pickHeliWaypoint(world);
+      ship.offX = wp.dx;
+      ship.offY = wp.dy;
+      ship.nextWaypointAt = now + HELI_REPICK_MS;
+      tx = fish.x + ship.offX;
+      ty = fish.y + ship.offY;
+    }
+    steerHeli(proj, tx, ty, HELI_CRUISE_SPEED);
+
+    // Time's up → peel off. Lock in a fixed outward heading (away from the player) and streak straight
+    // out from here on. A constant direction (not a finite waypoint) means it never decelerates or
+    // overshoots, so a player tailing it can't keep it pinned on screen.
+    if (now >= ship.attackUntil) {
+      let ex = proj.x - fish.x;
+      let ey = proj.y - fish.y;
+      const em = Math.hypot(ex, ey);
+      if (em > 1) {
+        ex /= em;
+        ey /= em;
+      } else {
+        const a = world.rng() * Math.PI * 2;
+        ex = Math.cos(a);
+        ey = Math.sin(a);
+      }
+      ship.exitDx = ex;
+      ship.exitDy = ey;
+      ship.phase = "exit";
+    }
+  } else {
+    // exit: streak straight out along the locked heading at transit speed — never stops or bounces.
+    // Remove once the body has fully left the arena (guaranteed even if the player chases it across
+    // the map) or is well clear of the player's view (the common case when they don't follow).
+    proj.vx = ship.exitDx * HELI_TRANSIT_SPEED;
+    proj.vy = ship.exitDy * HELI_TRANSIT_SPEED;
+    const leftArena =
+      proj.x < -HELI_BODY_RADIUS ||
+      proj.x > ARENA.width + HELI_BODY_RADIUS ||
+      proj.y < -HELI_BODY_RADIUS ||
+      proj.y > ARENA.height + HELI_BODY_RADIUS;
+    if (leftArena || distToPlayer > viewRadius(fish.mass) * 1.15) {
+      world.removeProjectile(proj.id);
+      state.ship = null;
+      return;
+    }
   }
 
-  // Steer the body toward the waypoint (it integrates via vx/vy next tick).
-  const tx = ship.waypointX - proj.x;
-  const ty = ship.waypointY - proj.y;
-  const tmag = Math.hypot(tx, ty) || 1;
-  proj.vx = (tx / tmag) * HELI_CRUISE_SPEED;
-  proj.vy = (ty / tmag) * HELI_CRUISE_SPEED;
+  // Aim + heading. While attacking, nose tracks the lead-aim angle of the nearest enemy (or
+  // travel direction when there's nothing to shoot); in transit it noses into its travel direction.
+  const travel = Math.atan2(proj.vy, proj.vx);
+  let aim: number | null = null;
+  if (ship.phase === "attack") {
+    const target = nearestOnScreenEnemy(world, fish, proj);
+    if (target) aim = leadAngle(proj.x, proj.y, target, lvl.speed ?? 460);
+  }
+  const desired = aim ?? travel;
+  ship.heading = slewAngle(ship.heading, desired, HELI_TURN_RATE * HELI_DT);
+  proj.facing = ship.heading;
 
-  // Fire on the level cadence (real lead-aim impl lands in the next task).
-  const interval = lvl.intervalMs ?? 700;
-  if (now - ship.lastFireAt >= interval) {
-    ship.lastFireAt = now;
-    fireHeliBullet(world, fish, proj, lvl, damage, now);
+  // Fire on the level cadence, but only when attacking, with a real target, and the nose is
+  // aligned to the aim — bullets always leave along the nose, so it shoots where it faces.
+  if (ship.phase === "attack" && aim !== null && Math.abs(angDiff(ship.heading, aim)) <= HELI_FIRE_ALIGN) {
+    const interval = lvl.intervalMs ?? 700;
+    if (now - ship.lastFireAt >= interval) {
+      ship.lastFireAt = now;
+      fireHeliBullet(world, fish, proj, lvl, damage, now);
+    }
   }
 }
 
@@ -692,28 +823,28 @@ function leadAngle(ox: number, oy: number, target: Fish, bulletSpeed: number): n
 }
 
 /**
- * The heli fires `count` lead-aimed AK bullets (gunship: 2 with a slight spread) at the
- * nearest on-screen fish. Bullets are normal single-hit linear projectiles attributed to
- * the heli's weapon id, so they ride applyProjectileDamage and trigger Battle Comms on hit.
+ * The heli fires `count` AK bullets (gunship: 2 with a slight spread) straight out the nose —
+ * along `ship.facing`, which the caller has already slewed onto the lead-aim angle of the target.
+ * Bullets are normal single-hit linear projectiles attributed to the heli's weapon id, so they
+ * ride applyProjectileDamage and trigger Battle Comms on hit, and emerge from the nose tip.
  */
 function fireHeliBullet(world: World, fish: Fish, ship: Projectile, lvl: WeaponLevel, damage: number, now: number): void {
-  const target = nearestOnScreenEnemy(world, fish, ship);
-  if (!target) return;
   const speed = lvl.speed ?? 460;
   const count = lvl.count ?? 1;
   const spread = lvl.spread ?? 0;
   const radius = lvl.radius ?? 18;
-  const aim = leadAngle(ship.x, ship.y, target, speed);
+  const facing = ship.facing ?? Math.atan2(ship.vy, ship.vx);
   for (let i = 0; i < count; i++) {
     const offset = count === 1 ? 0 : spread * (i / (count - 1) - 0.5);
-    const a = aim + offset;
+    const a = facing + offset;
     const dirX = Math.cos(a);
     const dirY = Math.sin(a);
     world.spawnProjectile({
       ownerId: fish.id,
       weaponId: ship.weaponId,
-      x: ship.x + dirX * 6,
-      y: ship.y + dirY * 6,
+      // Emerge from the nose tip so the muzzle reads off the front of the (now 2×) body.
+      x: ship.x + dirX * HELI_BODY_RADIUS,
+      y: ship.y + dirY * HELI_BODY_RADIUS,
       vx: dirX * speed,
       vy: dirY * speed,
       damage,

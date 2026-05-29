@@ -43,17 +43,18 @@ Feature: XP and level progression
     And the XP threshold for level 2 is 11
     And the XP threshold for level 5 is 14
 
-  Scenario: Dismissing the level-up modal unfreezes input
+  Scenario: Input is honored while the level-up modal is open
+    # The modal is non-blocking: the player keeps swimming while choosing a card.
     Given a player "Alpha" at (1000, 1000) with mass 10
     And "Alpha" has accumulated 10 XP
     When level-ups are processed
-    And "Alpha" dismisses the level-up modal
     And "Alpha" sends input (1, 0)
     And the world advances 1 seconds
     Then "Alpha" has a pending level-up modal
     And the speed of "Alpha" is approximately 640
 
-  Scenario: Restoring the modal re-freezes input
+  Scenario: Movement stays live after dismissing and restoring the modal
+    # Dismiss/restore only toggles modal visibility now — it never freezes movement.
     Given a player "Alpha" at (1000, 1000) with mass 10
     And "Alpha" has accumulated 10 XP
     When level-ups are processed
@@ -61,8 +62,19 @@ Feature: XP and level progression
     And "Alpha" restores the level-up modal
     And "Alpha" sends input (1, 0)
     And the world advances 1 seconds
-    Then the speed of "Alpha" is approximately 0
+    Then the speed of "Alpha" is approximately 640
     And "Alpha" has a pending level-up modal
+
+  Scenario: Weapons keep firing while the level-up modal is open
+    # The modal is non-blocking, so auto-attacks don't pause while choosing a card.
+    Given a player "Apex" at (4000, 4000) with mass 50
+    And "Apex" has weapon "pulse" at level 1
+    And "Apex" has accumulated 10 XP
+    And an AI fish "Minnow" at (4150, 4000) with mass 25
+    When level-ups are processed
+    And the world advances 1 tick
+    Then "Apex" has a pending level-up modal
+    And "Minnow" has mass approximately 24
 
   Scenario: Picking the only pending card clears everything
     Given a player "Alpha" at (1000, 1000) with mass 10

@@ -3,7 +3,8 @@ import { GlowFilter } from "pixi-filters/glow";
 
 export type RenderableWeaponId =
   | "bubble" | "spine" | "pulse" | "ink" | "piranha"
-  | "tidal" | "puffer" | "eel" | "kraken" | "school";
+  | "tidal" | "puffer" | "eel" | "kraken" | "school"
+  | "heli" | "gunship";
 
 // Per-weapon ribbon trail color (only weapons that actually travel get a trail).
 // AK-47 / P4uly's Gun fire bullets, so their trails read as warm muzzle tracers.
@@ -13,14 +14,19 @@ const TRAIL_COLORS: Record<string, { rgb: [number, number, number]; alpha: numbe
   spine:  { rgb: [1.00, 0.91, 0.52], alpha: 0.55, len: 5 },
   piranha:{ rgb: [1.00, 0.56, 0.44], alpha: 0.55, len: 6 },
   school: { rgb: [1.00, 0.50, 0.19], alpha: 0.60, len: 6 },
+  // Heli AK rounds leave bright warm tracers so the fire reads clearly.
+  heli:   { rgb: [1.00, 0.80, 0.35], alpha: 0.70, len: 8 },
+  gunship:{ rgb: [1.00, 0.62, 0.22], alpha: 0.75, len: 9 },
 };
 
 // Visual radius is decoupled from collision radius — projectiles render at a
 // size that reads well regardless of their hit radius. AK-47 / P4uly's Gun read
-// as big, chunky bullets.
+// as big, chunky bullets. Heli/gunship rounds render extra-large so they're easy to spot.
 const VISUAL_RADIUS_SCALE: Record<string, number> = {
   bubble: 0.95,
   tidal: 1.15,
+  heli: 1.7,
+  gunship: 1.8,
 };
 
 export class ProjectileSprite {
@@ -71,6 +77,15 @@ export class ProjectileSprite {
         color: 0xffd27f,
         quality: 0.18,
       });
+    } else if (this.weaponId === "heli" || this.weaponId === "gunship") {
+      // Strong warm muzzle glow so the heli's AK tracers pop against the water.
+      glow = new GlowFilter({
+        distance: 9,
+        outerStrength: 1.8,
+        innerStrength: 0.0,
+        color: this.weaponId === "gunship" ? 0xffb14a : 0xffd27f,
+        quality: 0.18,
+      });
     }
     // ink/kraken (trail weapons) are rendered separately as diffusing blobs — see render/ink.ts.
     if (glow) {
@@ -111,8 +126,15 @@ export class ProjectileSprite {
     g.clear();
     const r = this.radius;
     switch (this.weaponId) {
-      case "bubble": {
+      case "bubble":
+      case "heli": {
+        // Heli AK round: same brass casing as the AK-47, drawn big via VISUAL_RADIUS_SCALE.
         drawBullet(g, r, { casing: 0xc8a951, outline: 0x8a6d1f, nose: 0xb87333 });
+        break;
+      }
+      case "gunship": {
+        // Apache minigun round: hotter brass, matches the evolved palette.
+        drawBullet(g, r, { casing: 0xffd24a, outline: 0xc8881a, nose: 0xff8c3a });
         break;
       }
       case "spine": {

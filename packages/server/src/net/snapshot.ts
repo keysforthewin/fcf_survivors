@@ -56,6 +56,13 @@ function projectileDelta(proj: Projectile, prev: unknown): EntityDelta {
     delta.radius = Math.round(proj.radius);
     if (proj.isBody) delta.body = true;
   }
+  // The heli body maneuvers (unlike a straight-flying UFO), so re-send its velocity each tick for
+  // accurate dead-reckoning, plus its facing so the client rotates the sprite to where it's aiming.
+  if (proj.isBody && proj.facing !== undefined) {
+    delta.vx = Math.round(proj.vx);
+    delta.vy = Math.round(proj.vy);
+    delta.facing = Math.round(proj.facing * 1000) / 1000;
+  }
   // Orbital blades carry their angle each tick so the client can animate the orbit at its
   // own framerate (re-anchor to orbitAngle, extrapolate at orbitAngular). orbitRadius grows
   // with owner mass, so it's resent too; both are tiny and orbitals are few.
