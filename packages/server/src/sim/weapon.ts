@@ -1,11 +1,25 @@
 import { WEAPONS, getWeaponLevel, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
-import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState } from "./entity.ts";
+import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState, HeliState } from "./entity.ts";
 import type { World } from "./world.ts";
 import { getWeaponDamageBonus, getWeaponCooldownMult, getDamageTakenReduction } from "./passives.ts";
 
 /** Every hit always lands at least this much, so flat armor (Full Metal) can't fully nullify a weapon. */
 const MIN_HIT_DAMAGE = 1;
+
+/** Heli body sprite/collision radius (it deals no damage; this is just its size). */
+const HELI_BODY_RADIUS = 48;
+/** Speed (units/sec) the heli body cruises toward its loiter waypoint. */
+const HELI_CRUISE_SPEED = 320;
+/** Loiter ring (min/max radius) the heli picks waypoints within, around the player. */
+const HELI_WAYPOINT_MIN_R = 180;
+const HELI_WAYPOINT_MAX_R = 420;
+/** Re-pick a loiter waypoint at least this often (ms). */
+const HELI_REPICK_MS = 1500;
+/** Re-pick once the body gets within this distance of its waypoint. */
+const HELI_ARRIVE_DIST = 60;
+/** Heli AK bullet lifetime (ms) — separate from the heli's own uptime. */
+const HELI_BULLET_LIFETIME_MS = 2500;
 
 /**
  * On-screen test: is (x, y) within the owner's view radius? Mirrors the snapshot
@@ -148,6 +162,9 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
         // Sets its own cooldownReadyAt when it summons a wave, so the HUD shows
         // the real countdown to the next UFO — don't clobber it here.
         tickFlyby(world, fish, slot, lvl, dmg, now, cdMult);
+        break;
+      case "heli":
+        tickHeli(world, fish, slot, lvl, dmg, now, cdMult);
         break;
     }
   }
@@ -537,6 +554,89 @@ function ensureFlybyState(slot: WeaponSlot): FlybyState {
   const s: FlybyState = { kind: "flyby", ships: [] };
   slot.state = s;
   return s;
+}
+
+function ensureHeliState(slot: WeaponSlot): HeliState {
+  if (slot.state && slot.state.kind === "heli") return slot.state;
+  const s: HeliState = { kind: "heli", ship: null };
+  slot.state = s;
+  return s;
+}
+
+function pickHeliWaypoint(world: World, fish: Fish): { x: number; y: number } {
+  const ang = world.rng() * Math.PI * 2;
+  const r = HELI_WAYPOINT_MIN_R + world.rng() * (HELI_WAYPOINT_MAX_R - HELI_WAYPOINT_MIN_R);
+  return { x: fish.x + Math.cos(ang) * r, y: fish.y + Math.sin(ang) * r };
+}
+
+/**
+ * Mortal's Heli: summon a minicopter (a damage-0 linear projectile) that loiters around the
+ * player, then fires a lead-aimed AK bullet at the nearest on-screen fish every intervalMs.
+ * Sets its own cooldownReadyAt (like tickFlyby) so the HUD shows the real next-summon countdown.
+ */
+function tickHeli(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number, cdMult: number): void {
+  const state = ensureHeliState(slot);
+  // Drop the ship once its body projectile has expired/been removed.
+  if (state.ship && !world.projectiles.has(state.ship.projId)) state.ship = null;
+
+  // Summon when none is up and the cooldown has elapsed.
+  if (!state.ship && now >= slot.cooldownReadyAt) {
+    const lifetimeMs = lvl.lifetimeMs ?? 8000;
+    const start = pickHeliWaypoint(world, fish);
+    const proj = world.spawnProjectile({
+      ownerId: fish.id,
+      weaponId: slot.id,
+      x: start.x,
+      y: start.y,
+      vx: 0,
+      vy: 0,
+      damage: 0,                 // the body is harmless; its bullets deal the damage
+      radius: HELI_BODY_RADIUS,
+      expiresAt: now + lifetimeMs,
+      behavior: "linear",
+      reHitMs: 0,
+      isBody: true,
+    });
+    if (proj.id >= 0) {
+      state.ship = { projId: proj.id, lastFireAt: now, waypointX: start.x, waypointY: start.y, nextWaypointAt: now + HELI_REPICK_MS };
+    }
+    slot.cooldownReadyAt = now + (lvl.cooldownMs ?? 20000) * cdMult;
+  }
+
+  const ship = state.ship;
+  if (!ship) return;
+  const proj = world.projectiles.get(ship.projId);
+  if (!proj) { state.ship = null; return; }
+
+  // Re-pick a loiter waypoint periodically or on arrival, so the heli keeps tracking the player.
+  const dwx = proj.x - ship.waypointX;
+  const dwy = proj.y - ship.waypointY;
+  if (now >= ship.nextWaypointAt || dwx * dwx + dwy * dwy < HELI_ARRIVE_DIST * HELI_ARRIVE_DIST) {
+    const wp = pickHeliWaypoint(world, fish);
+    ship.waypointX = wp.x;
+    ship.waypointY = wp.y;
+    ship.nextWaypointAt = now + HELI_REPICK_MS;
+  }
+
+  // Steer the body toward the waypoint (it integrates via vx/vy next tick).
+  const tx = ship.waypointX - proj.x;
+  const ty = ship.waypointY - proj.y;
+  const tmag = Math.hypot(tx, ty) || 1;
+  proj.vx = (tx / tmag) * HELI_CRUISE_SPEED;
+  proj.vy = (ty / tmag) * HELI_CRUISE_SPEED;
+
+  // Fire on the level cadence (real lead-aim impl lands in the next task).
+  const interval = lvl.intervalMs ?? 700;
+  if (now - ship.lastFireAt >= interval) {
+    ship.lastFireAt = now;
+    fireHeliBullet(world, fish, proj, lvl, damage, now);
+  }
+}
+
+function fireHeliBullet(world: World, fish: Fish, ship: Projectile, lvl: WeaponLevel, damage: number, now: number): void {
+  // Implemented in the next task (lead-aim). Stub: intentionally a no-op for now.
+  void world; void fish; void ship; void lvl; void damage; void now;
+  void HELI_BULLET_LIFETIME_MS;
 }
 
 /** Called from world.step when owner dies: orphan orbital/trail projectiles so they clean up. */
