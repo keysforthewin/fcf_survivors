@@ -32,3 +32,18 @@ Feature: Mortal's Heli (minicopter weapon)
     # ~21s total: cooldown elapsed → a fresh heli summons.
     When the world advances 12 seconds
     Then 1 heli bodies owned by "Pilot" are in flight
+
+  Scenario: The heli's AK damages a nearby fish
+    Given a player "Pilot" at (4000, 4000) with mass 50
+    And "Pilot" has weapon "heli" at level 5
+    And a player "Prey" at (4300, 4000) with mass 20
+    When the world advances 40 ticks
+    Then "Pilot" has at least 1 weapon hits
+    And "Pilot" has dealt at least 1 damage
+
+  Scenario: The heli ignores fish far off the player's screen
+    Given a player "Pilot" at (4000, 4000) with mass 50
+    And "Pilot" has weapon "heli" at level 5
+    And an AI fish "Far" at (9000, 4000) with mass 20
+    When the world advances 60 ticks
+    Then "Far" has mass 20

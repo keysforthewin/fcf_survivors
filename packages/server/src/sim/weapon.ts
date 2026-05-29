@@ -633,10 +633,88 @@ function tickHeli(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, 
   }
 }
 
+/**
+ * Pick the enemy fish nearest the heli that's currently on the owner's screen (mirrors
+ * fireLaser's visibility gate), or null if the owner has nothing visible to shoot.
+ */
+function nearestOnScreenEnemy(world: World, owner: Fish, ship: Projectile): Fish | null {
+  const scratch: Fish[] = [];
+  const viewR = viewRadius(owner.mass);
+  world.fishHash.query(owner.x, owner.y, viewR + MAX_FISH_RADIUS_PAD, scratch);
+  const viewR2 = viewR * viewR;
+  let best: Fish | null = null;
+  let bestD2 = Infinity;
+  for (const target of scratch) {
+    if (target.id === owner.id || !target.alive) continue;
+    if (!withinOwnerView(owner, target.x, target.y, viewR2)) continue;
+    const dx = target.x - ship.x;
+    const dy = target.y - ship.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = target; }
+  }
+  return best;
+}
+
+/**
+ * Interception aim: the angle from (ox,oy) to where `target` will be, given a bullet of
+ * `bulletSpeed`, by solving |R + V·t| = bulletSpeed·t for the smallest positive t. Falls
+ * back to aiming at the target's current position when there is no positive solution.
+ */
+function leadAngle(ox: number, oy: number, target: Fish, bulletSpeed: number): number {
+  const rx = target.x - ox;
+  const ry = target.y - oy;
+  const tvx = target.vx;
+  const tvy = target.vy;
+  const a = tvx * tvx + tvy * tvy - bulletSpeed * bulletSpeed;
+  const b = 2 * (rx * tvx + ry * tvy);
+  const c = rx * rx + ry * ry;
+  let t = -1;
+  if (Math.abs(a) < 1e-6) {
+    if (Math.abs(b) > 1e-6) t = -c / b;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      const cands = [(-b + sq) / (2 * a), (-b - sq) / (2 * a)].filter((v) => v > 1e-4);
+      if (cands.length) t = Math.min(...cands);
+    }
+  }
+  if (t > 0) return Math.atan2(ry + tvy * t, rx + tvx * t);
+  return Math.atan2(ry, rx);
+}
+
+/**
+ * The heli fires `count` lead-aimed AK bullets (gunship: 2 with a slight spread) at the
+ * nearest on-screen fish. Bullets are normal single-hit linear projectiles attributed to
+ * the heli's weapon id, so they ride applyProjectileDamage and trigger Battle Comms on hit.
+ */
 function fireHeliBullet(world: World, fish: Fish, ship: Projectile, lvl: WeaponLevel, damage: number, now: number): void {
-  // Implemented in the next task (lead-aim). Stub: intentionally a no-op for now.
-  void world; void fish; void ship; void lvl; void damage; void now;
-  void HELI_BULLET_LIFETIME_MS;
+  const target = nearestOnScreenEnemy(world, fish, ship);
+  if (!target) return;
+  const speed = lvl.speed ?? 460;
+  const count = lvl.count ?? 1;
+  const spread = lvl.spread ?? 0;
+  const radius = lvl.radius ?? 18;
+  const aim = leadAngle(ship.x, ship.y, target, speed);
+  for (let i = 0; i < count; i++) {
+    const offset = count === 1 ? 0 : spread * (i / (count - 1) - 0.5);
+    const a = aim + offset;
+    const dirX = Math.cos(a);
+    const dirY = Math.sin(a);
+    world.spawnProjectile({
+      ownerId: fish.id,
+      weaponId: ship.weaponId,
+      x: ship.x + dirX * 6,
+      y: ship.y + dirY * 6,
+      vx: dirX * speed,
+      vy: dirY * speed,
+      damage,
+      radius,
+      expiresAt: now + HELI_BULLET_LIFETIME_MS,
+      behavior: "linear",
+      reHitMs: 0,
+    });
+  }
 }
 
 /** Called from world.step when owner dies: orphan orbital/trail projectiles so they clean up. */
