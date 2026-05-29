@@ -1,6 +1,6 @@
 import { Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
-import { WEAPONS } from "@fcf/shared";
+import { WEAPONS, parseCardId } from "@fcf/shared";
 import type { WeaponId } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import { getFish } from "../support/world-factory.ts";
@@ -44,3 +44,16 @@ Then("{string} effective move speed is halved", function (this: TestWorld, name:
   const base = getMoveSpeed(f);
   assert.ok(Math.abs(eff - base * 0.5) < 1e-6, `expected halved speed, got ${eff} vs base ${base}`);
 });
+
+Then(
+  "{string} is not offered an evolution for {string}",
+  function (this: TestWorld, name: string, baseId: string) {
+    const sim = this.requireSim();
+    const f = getFish(sim, name);
+    const found = f.pendingLevelUp.some((c) => {
+      const parsed = parseCardId(c.id);
+      return parsed?.kind === "evolution" && parsed.baseId === baseId;
+    });
+    assert.ok(!found, `expected ${name} NOT offered an evolution for ${baseId}`);
+  },
+);

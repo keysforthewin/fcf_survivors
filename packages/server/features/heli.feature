@@ -47,3 +47,19 @@ Feature: Mortal's Heli (minicopter weapon)
     And an AI fish "Far" at (9000, 4000) with mass 20
     When the world advances 60 ticks
     Then "Far" has mass 20
+
+  Scenario: Mortal's Heli maxed with Battle Comms maxed offers the Attack Helicopter
+    Given a player "Ace" at (1000, 1000) with mass 10
+    And "Ace" has weapon "heli" at level 5
+    And "Ace" has passive "comms" at stack 5
+    And "Ace" has accumulated 10 XP
+    When level-ups are processed
+    Then "Ace" is offered an evolution for "heli"
+
+  Scenario: The Attack Helicopter is not offered until Battle Comms is maxed
+    Given a player "Rook" at (1000, 1000) with mass 10
+    And "Rook" has weapon "heli" at level 5
+    And "Rook" has passive "comms" at stack 2
+    And "Rook" has accumulated 10 XP
+    When level-ups are processed
+    Then "Rook" is not offered an evolution for "heli"
