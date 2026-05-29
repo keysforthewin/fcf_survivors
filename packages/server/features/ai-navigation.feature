@@ -6,10 +6,11 @@ Feature: AI navigation hysteresis, stuck recovery, and separation
   Background:
     Given a fresh world
 
-  Scenario: AI commits to its first prey instead of flipping each tick
+  Scenario: A committed AI keeps its angered target instead of flipping to a closer one
     Given an AI fish "Hunter" at (4000, 4000) with mass 100 in "wander" mode
     And a player "PreyA" at (4200, 4000) with mass 10
     And a player "PreyB" at (4300, 4000) with mass 10
+    And "Hunter" is angered at "PreyA"
     When the world advances 1 tick
     Then "Hunter" has target "PreyA"
     When "PreyB" is moved to (4170, 4000)

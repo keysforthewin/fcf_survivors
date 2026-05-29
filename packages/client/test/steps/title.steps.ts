@@ -6,7 +6,7 @@ Then("I see the title overlay", async ({ page }) => {
   const title = new TitlePage(page);
   await expect(title.overlay).toBeVisible();
   await expect(title.nameInput).toBeVisible();
-  await expect(title.diveInButton).toContainText("DIVE IN");
+  await expect(title.goDeepButton).toContainText("GO DEEP");
 });
 
 Then("the default species is selected", async ({ page }) => {
@@ -32,8 +32,8 @@ When("I press Enter in the name input", async ({ page }) => {
   await new TitlePage(page).nameInput.press("Enter");
 });
 
-When("I click DIVE IN", async ({ page }) => {
-  await new TitlePage(page).diveInButton.click();
+When("I click GO DEEP", async ({ page }) => {
+  await new TitlePage(page).goDeepButton.click();
 });
 
 Then(

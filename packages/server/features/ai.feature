@@ -11,11 +11,30 @@ Feature: AI fish behaviour
     When the world advances 1 tick
     Then "Bob" is in "flee" mode
 
-  Scenario: An AI in wander mode chases an edible smaller fish
+  Scenario: An AI does not chase edible prey on the very first tick (aggro ramps up)
+    # Fish no longer turn and hunt the instant prey is in range — aggro accumulates first.
     Given an AI fish "Big" at (4000, 4000) with mass 100 in "wander" mode
     And a player "Tiny" at (4200, 4000) with mass 10
     When the world advances 1 tick
+    Then "Big" is in "wander" mode
+
+  Scenario: An AI commits to chasing edible prey that loiters in its aggro radius
+    Given an AI fish "Big" at (4000, 4000) with mass 100 in "wander" mode
+    And a player "Tiny" at (4200, 4000) with mass 10
+    When "Big" is held at (4000, 4000) for 25 ticks
     Then "Big" is in "chase" mode
+    And "Big" has target "Tiny"
+
+  Scenario: A committed AI chases its target beyond its normal sight radius
+    # Once angered, an AI pursues out to AGGRO.leashRadius (1200) — far past the 400-unit sight —
+    # so it's much harder to shake than the old "leave the 400 radius and it forgets you".
+    Given an AI fish "Hunter" at (4000, 4000) with mass 100 in "wander" mode
+    And a player "Runner" at (4500, 4000) with mass 10
+    And "Hunter" is angered at "Runner"
+    And baseline position of "Hunter"
+    When the world advances 20 ticks
+    Then "Hunter" is in "chase" mode
+    And "Hunter" has moved at least 100 units
 
   Scenario: An AI ignores fish outside its sight radius
     Given an AI fish "Bob" at (4000, 4000) with mass 10 in "wander" mode
@@ -70,9 +89,10 @@ Feature: AI fish behaviour
   # fish gains mass: pellets, chunks, and eating other fish.
 
   Scenario: Eating a fish cannot push an AI past the mass cap
+    # Snack sits just in front of Shark (which faces +x by default) so the front-of-face eat fires.
     Given an AI fish "Shark" at (1000, 1000) with mass 199 in "wander" mode
-    And a player "Snack" at (1000, 1000) with mass 100
-    When the world advances 1 tick
+    And a player "Snack" at (1040, 1000) with mass 100
+    When the world advances 2 ticks
     Then "Snack" is dead
     And "Shark" has mass 200
 

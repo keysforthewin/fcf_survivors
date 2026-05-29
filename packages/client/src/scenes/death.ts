@@ -2,6 +2,7 @@ import type { EatenMsg, LeaderboardEntry } from "@fcf/shared";
 import { WEAPONS, PASSIVES, colorForSpecies, DEFAULT_SPECIES_ID } from "@fcf/shared";
 import { loadIdentity, saveIdentity } from "../identity.ts";
 import { mountIdentityEditor } from "../hud/identity-editor.ts";
+import { GEAR_SVG } from "../render/icons.ts";
 import { type SortKey, SORT_KEYS, SORT_LABEL, renderLeaderboardRows, formatStat, formatDuration, fetchLeaderboard } from "../hud/leaderboard-view.ts";
 
 export type DeathChoice = "dive" | "spectate";
@@ -15,7 +16,7 @@ export function showDeath(
     overlay.className = "death-overlay death-overlay-translucent";
     overlay.innerHTML = `
       <div class="death-card">
-        <button class="hud-gear death-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
+        <button class="hud-gear death-gear" type="button" data-gear aria-label="Edit fish">${GEAR_SVG}</button>
         <h1>You were eaten by ${escapeHtml(eaten.byName)}</h1>
         <p class="subtitle">It tasted like victory. For them.</p>
         <div class="death-columns">

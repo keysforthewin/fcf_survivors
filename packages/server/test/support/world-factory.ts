@@ -128,6 +128,12 @@ export function makeWorld(opts: MakeWorldOpts = {}): TestSim {
         lastSampleAt: t,
         stuckSince: null,
         blacklist: new Map(),
+        aggro: new Map(),
+        angeredTargetId: null,
+        chaseLastKnownX: 0,
+        chaseLastKnownY: 0,
+        chaseCommitUntil: 0,
+        aggroJitter: 0,
       };
     }
     world.fish.set(id, fish);

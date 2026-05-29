@@ -82,8 +82,12 @@ function renderPanel(t: SkillPanelTarget): string {
   }
   const def = PASSIVES[t.id];
   if (!def) return emptyShell("Unknown passive");
-  const total = stackedMult(def.perStack, t.stack);
-  const pctText = formatMultiplier(total);
+  // Flat passives (Mmiguel's Aim / Full Metal) add a signed integer per stack; the rest
+  // are per-stack multipliers shown as percentages.
+  const perStackText = def.flat ? formatFlat(def.perStack) : formatMultiplier(def.perStack);
+  const effectText = def.flat
+    ? formatFlat(def.perStack * t.stack)
+    : formatMultiplier(stackedMult(def.perStack, t.stack));
   return `
     <div class="skill-panel-card kind-passive">
       <div class="skill-panel-header">
@@ -92,8 +96,8 @@ function renderPanel(t: SkillPanelTarget): string {
         <p class="skill-panel-desc">${escapeHtml(def.description)}</p>
       </div>
       <div class="skill-panel-stats">
-        <div class="skill-panel-stat"><span>Per stack</span><b>${formatMultiplier(def.perStack)}</b></div>
-        <div class="skill-panel-stat"><span>Current effect</span><b>${pctText}</b></div>
+        <div class="skill-panel-stat"><span>Per stack</span><b>${perStackText}</b></div>
+        <div class="skill-panel-stat"><span>Current effect</span><b>${effectText}</b></div>
         <div class="skill-panel-stat"><span>Affects</span><b>${escapeHtml(humanEffect(def.effect))}</b></div>
       </div>
       <div class="skill-panel-actions">
@@ -141,6 +145,11 @@ function formatMultiplier(m: number): string {
   const pct = (m - 1) * 100;
   const sign = pct >= 0 ? "+" : "";
   return `${sign}${pct.toFixed(1)}%`;
+}
+
+function formatFlat(n: number): string {
+  // 1 -> "+1", -3 -> "-3"
+  return `${n >= 0 ? "+" : ""}${n}`;
 }
 
 function humanEffect(effect: string): string {

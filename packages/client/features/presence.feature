@@ -5,7 +5,7 @@ Feature: Presence HUD — toasts and roster
   Background:
     Given the WebSocket is mocked
     And I open the title screen
-    And I dive in as "Alice"
+    And I go deep as "Alice"
 
   Scenario: A playerJoined message shows a toast naming the joiner
     When the server sends a playerJoined for "Bob"

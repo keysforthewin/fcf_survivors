@@ -10,6 +10,11 @@ function effectMult(fish: Fish, id: PassiveId): number {
   return stackedMult(PASSIVES[id].perStack, stack(fish, id));
 }
 
+/** Signed flat total for an additive passive: perStack (+1 / −1) × current stack. */
+function flatEffect(fish: Fish, id: PassiveId): number {
+  return PASSIVES[id].perStack * stack(fish, id);
+}
+
 export function getMoveSpeed(fish: Fish): number {
   return FISH.baseSpeed * effectMult(fish, "fin") * massSpeedMult(fish.mass);
 }
@@ -23,9 +28,9 @@ export function getBoostCooldown(fish: Fish): number {
   return FISH.boostCooldownMs * mult;
 }
 
-/** Multiplier on mass lost to weapon hits. <1 means the player is tougher. */
-export function getDamageTakenMult(fish: Fish): number {
-  return effectMult(fish, "scales");
+/** Flat damage subtracted from each incoming hit (Full Metal, −1/stack). Positive number. */
+export function getDamageTakenReduction(fish: Fish): number {
+  return -flatEffect(fish, "scales"); // scales.perStack is −1, so this returns +stack
 }
 
 export function getPickupRadius(baseRadius: number, fish: Fish): number {
@@ -45,8 +50,9 @@ export function getEatRangeMult(fish: Fish): number {
   return effectMult(fish, "closeEncounters");
 }
 
-export function getWeaponDamageMult(fish: Fish): number {
-  return effectMult(fish, "teeth");
+/** Flat weapon-damage bonus added to each hit (Mmiguel's Aim, +1/stack). */
+export function getWeaponDamageBonus(fish: Fish): number {
+  return flatEffect(fish, "teeth");
 }
 
 export function getWeaponCooldownMult(fish: Fish): number {

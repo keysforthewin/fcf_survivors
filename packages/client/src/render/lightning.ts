@@ -123,12 +123,29 @@ export class ZapEffect {
       this.lastFlicker = now;
     }
 
+    // Anchor the container at the origin node and draw every bolt RELATIVE to it.
+    // The container carries a GlowFilter; drawing raw world coordinates into a
+    // container parked at (0,0) made the filter's render texture span from the
+    // world origin out to the bolt — near the far edges of the 8000×8000 arena
+    // that texture exceeds the GPU max size and the bolt clips to nothing (a
+    // map-anchored dead band). Positioning the container + keeping geometry local
+    // mirrors how ProjectileSprite/FishSprite render, so bounds stay small.
+    const origin = this.nodes[0]!;
+    const ref = resolve(origin.id, origin);
+    this.container.x = ref.x;
+    this.container.y = ref.y;
+
     const g = this.g;
     g.clear();
     const n = this.boltCount();
     for (let i = 0; i < n; i++) {
       const [from, to] = this.endpoints(i, resolve);
-      this.drawBolt(g, from, to, this.seeds[i]!);
+      this.drawBolt(
+        g,
+        { x: from.x - ref.x, y: from.y - ref.y },
+        { x: to.x - ref.x, y: to.y - ref.y },
+        this.seeds[i]!,
+      );
     }
   }
 

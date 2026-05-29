@@ -12,10 +12,10 @@ Given("I open the title screen", async ({ page }) => {
   await expect(new TitlePage(page).overlay).toBeVisible();
 });
 
-When("I dive in as {string}", async ({ page }, name: string) => {
+When("I go deep as {string}", async ({ page }, name: string) => {
   const title = new TitlePage(page);
   await title.nameInput.fill(name);
-  await title.diveInButton.click();
+  await title.goDeepButton.click();
   // Wait for the title overlay to detach and the HUD to mount.
   await expect(title.overlay).toHaveCount(0);
   await expect(new ArenaPage(page).hud).toBeVisible();

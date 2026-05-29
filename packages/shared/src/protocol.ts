@@ -136,8 +136,16 @@ export interface EntityDelta {
   color?: string;
   /** Fish only (first-seen / on change): chosen species id → which photo sprite to render. */
   species?: string;
-  /** Fish only (transient, set only on the tick this fish bit prey): drives the chomp/lurch anim. */
+  /** Fish only (transient, set only on the tick this fish swallowed prey whole): drives the eat chomp/lurch anim. */
   biting?: boolean;
+  /** Fish only (transient, set only on the tick this fish nibbled a bigger fish): drives the quick nip anim. */
+  nibbling?: boolean;
+  /** Chunk only (first-seen): XP payload of an XP ball — a swallow's gold ball or a death-drop
+   *  ball (collecting grants this XP, no mass). Presence is also what tints a chunk gold. */
+  xp?: number;
+  /** Chunk only (first-seen): wall-time before which this ball can't be collected by ANYONE (the
+   *  swallow ball's ~2s fairness lock). The client shows a "charging" cue until this passes. */
+  collectableAt?: number;
   name?: string;
   weaponId?: string;
   ownerId?: number;
@@ -253,6 +261,12 @@ export interface SnapshotMsg {
   hits?: HitEvent[];
   /** Radial-pulse zap events this tick that are visible to this socket. */
   zaps?: ZapEvent[];
+  /**
+   * Fish swallowed whole this tick whose eater is visible to this socket: victim `id` + eater `by`.
+   * The client intercepts the matching `removed` entry and plays a suck-in-and-shrink animation
+   * (the victim sprite tweens into the eater's mouth) instead of destroying it outright.
+   */
+  swallowed?: Array<{ id: number; by: number }>;
 }
 
 export interface LevelUpCard {

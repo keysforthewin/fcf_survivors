@@ -17,8 +17,13 @@ export interface PassiveDef {
   name: string;
   description: string;
   maxStack: number;
-  /** Multiplier per stack: 1.10 = +10% per stack; 0.92 = -8% per stack. */
+  /**
+   * Multiplicative passives: per-stack multiplier (1.10 = +10%, 0.92 = −8%).
+   * Flat passives (`flat: true`): signed integer delta per stack (+1, −1) — not a multiplier.
+   */
   perStack: number;
+  /** True = additive integer per stack (perStack is a flat delta applied via + rather than ×). */
+  flat?: boolean;
   effect: PassiveEffect;
 }
 
@@ -32,12 +37,12 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
     maxStack: 5, perStack: 1.15, effect: "pelletXpMult",
   },
   scales: {
-    id: "scales",   name: "Full Metal",      description: "-12% mass lost from hits per stack.",
-    maxStack: 5, perStack: 0.88, effect: "damageTakenMult",
+    id: "scales",   name: "Full Metal",      description: "−1 damage taken per stack (always at least 1).",
+    maxStack: 5, perStack: -1, flat: true, effect: "damageTakenMult",
   },
   teeth: {
-    id: "teeth",    name: "Mmiguel's Aim",   description: "+15% weapon damage per stack.",
-    maxStack: 5, perStack: 1.15, effect: "weaponDmgMult",
+    id: "teeth",    name: "Mmiguel's Aim",   description: "+1 weapon damage per stack.",
+    maxStack: 5, perStack: 1, flat: true, effect: "weaponDmgMult",
   },
   reflex: {
     id: "reflex",   name: "Trillian's Soul", description: "−8% weapon cooldown per stack.",

@@ -7,7 +7,7 @@ Feature: Spectator mode
   Background:
     Given the WebSocket is mocked
     And I open the title screen
-    And I dive in as "Alice"
+    And I go deep as "Alice"
 
   Scenario: Death overlay is translucent so the arena stays visible behind it
     When the server sends an eaten message from "Megafish"

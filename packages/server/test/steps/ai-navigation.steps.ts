@@ -1,6 +1,6 @@
 import { Given, When, Then } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
-import { ARENA } from "@fcf/shared";
+import { AGGRO, ARENA } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import { advanceTicks, tryFish } from "../support/world-factory.ts";
 
@@ -96,6 +96,24 @@ Given(
     assert.ok(f, `${name} missing`);
     assert.ok(f.aiState, `${name} is not an AI fish`);
     f.aiState.wanderHeading = heading;
+  }
+);
+
+// Prime an AI's aggro so it is already committed to hunting a target — lets commitment/leash
+// scenarios run deterministically without depending on the multi-second aggro ramp.
+Given(
+  "{string} is angered at {string}",
+  function (this: TestWorld, name: string, targetName: string) {
+    const sim = this.requireSim();
+    const f = tryFish(sim, name);
+    assert.ok(f, `${name} missing`);
+    assert.ok(f.aiState, `${name} is not an AI fish`);
+    const tid = sim.byName.get(targetName);
+    assert.ok(tid != null, `Target ${targetName} not registered`);
+    f.aiState.aggro = f.aiState.aggro ?? new Map();
+    f.aiState.aggro.set(tid, AGGRO.maxMeter);
+    f.aiState.angeredTargetId = tid;
+    f.aiState.chaseCommitUntil = sim.clock.now() + AGGRO.commitMs;
   }
 );
 

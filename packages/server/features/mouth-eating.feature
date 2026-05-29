@@ -1,9 +1,8 @@
-Feature: Omnidirectional contact eating with front suction
-  Eating is any-contact: the moment two hitboxes overlap (from any angle) the bigger
-  fish eats the smaller, exactly like eating a pellet. The forward mouth cone is now
-  only a SUCTION BONUS that vacuums prey toward a moving fish from in front — it no
-  longer gates the eat, so flank and rear contact count too. Smaller fish must keep
-  their distance, not merely stay behind.
+Feature: Front-of-face eating with front suction
+  Eating another fish requires FRONT-OF-FACE contact: a moving fish only swallows prey inside
+  its forward mouth cone, and the cone-gated suction reels in-cone prey toward the mouth. Contact
+  from the flank or rear does NOT eat (the smaller fish nibbles instead). A truly stationary fish
+  (zero heading vector) has no cone, so it eats on contact from any angle.
 
   Background:
     Given a fresh world
@@ -15,21 +14,21 @@ Feature: Omnidirectional contact eating with front suction
     When the world advances 2 ticks
     Then "Beta" is dead
 
-  Scenario: Prey touching a moving predator from BEHIND is now eaten
+  Scenario: Prey touching a moving predator from BEHIND is safe (front-of-face)
     Given a player "Alpha" at (1000, 1000) with mass 50
     And "Alpha" has heading (1, 0)
     And a player "Beta" at (988, 1000) with mass 10
     When the world advances 2 ticks
-    Then "Beta" is dead
+    Then "Beta" is alive
 
-  Scenario: Prey touching a moving predator on its FLANK is now eaten
+  Scenario: Prey touching a moving predator on its FLANK is safe (front-of-face)
     Given a player "Alpha" at (1000, 1000) with mass 50
     And "Alpha" has heading (1, 0)
     And a player "Beta" at (1000, 988) with mass 10
     When the world advances 2 ticks
-    Then "Beta" is dead
+    Then "Beta" is alive
 
-  Scenario: A stationary predator eats prey touching it from any angle
+  Scenario: A stationary predator (no heading) eats prey touching it from any angle
     Given a player "Alpha" at (1000, 1000) with mass 50
     And "Alpha" has heading (0, 0)
     And a player "Beta" at (995, 1000) with mass 10

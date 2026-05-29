@@ -1,6 +1,17 @@
-import { AI, ARENA, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
-import type { Fish } from "./entity.ts";
+import { AGGRO, AI, ARENA, FRENZY, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
+import type { EntityId } from "@fcf/shared";
+import type { AiState, Chunk, Fish } from "./entity.ts";
 import type { World } from "./world.ts";
+
+/**
+ * Add aggro toward `attackerId` (clamped to AGGRO.maxMeter). Called from the fish-eat loop when a
+ * smaller fish nibbles this AI — sustained nibble damage crosses the commit threshold and turns the
+ * AI on its attacker. Lazy-inits the meter map so a harness-built AiState (no `aggro`) is safe.
+ */
+export function addAggro(state: AiState, attackerId: EntityId, amount: number): void {
+  if (!state.aggro) state.aggro = new Map();
+  state.aggro.set(attackerId, Math.min(AGGRO.maxMeter, (state.aggro.get(attackerId) ?? 0) + amount));
+}
 import { NPC_NAMES } from "./npc-names.ts";
 
 /** AI fish name pool. Edit the list in `npc-names.ts`. */
@@ -93,6 +104,13 @@ export function spawnAiFish(world: World, mass?: number): Fish {
       fleeLastKnownX: 0,
       fleeLastKnownY: 0,
       fleeMemoryUntil: 0,
+      aggro: new Map(),
+      angeredTargetId: null,
+      chaseLastKnownX: 0,
+      chaseLastKnownY: 0,
+      chaseCommitUntil: 0,
+      aggroJitter: rng(),
+      feedTargetId: null,
     },
     weapons: [],
     passives: new Map(),
@@ -107,11 +125,56 @@ export function spawnAiFish(world: World, mass?: number): Fish {
   return fish;
 }
 
+// Reused across updateAi calls so the per-tick frenzy query allocates nothing. SpatialHash.query
+// appends, so callers must reset length to 0 first (mirrors the scratch pattern in world.ts).
+const feedScratch: Chunk[] = [];
+
+/**
+ * Nearest dropped XP ball (an xp-bearing chunk) within FRENZY.radius of the fish, or null. Includes
+ * locked burp balls — the fish gathers around the big gold ball until it arms (flee still protects
+ * it from the eater). Light hysteresis (AI.targetSwitchHysteresis, mirroring the fish-target logic)
+ * keeps the fish committed to its current ball unless a new one is meaningfully closer, so it
+ * doesn't jitter between near-equidistant balls in a swarm.
+ */
+function nearestFeedChunk(world: World, fish: Fish, state: AiState): Chunk | null {
+  feedScratch.length = 0;
+  world.chunkHash.query(fish.x, fish.y, FRENZY.radius, feedScratch);
+  const r2 = FRENZY.radius * FRENZY.radius;
+  let nearest: Chunk | null = null;
+  let nearestD2 = Infinity;
+  let current: Chunk | null = null;
+  let currentD2 = Infinity;
+  for (const c of feedScratch) {
+    if (c.xp === undefined) continue; // XP balls only — ignore mass-bearing corpse chunks
+    const dx = c.x - fish.x;
+    const dy = c.y - fish.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > r2) continue; // the hash is cell-granular — enforce the exact radius
+    if (c.id === state.feedTargetId) { current = c; currentD2 = d2; }
+    if (d2 < nearestD2) { nearestD2 = d2; nearest = c; }
+  }
+  if (current && nearest && nearest.id !== current.id) {
+    const hystSq = AI.targetSwitchHysteresis * AI.targetSwitchHysteresis;
+    return nearestD2 < hystSq * currentD2 ? nearest : current;
+  }
+  return nearest;
+}
+
 export function updateAi(fish: Fish, world: World, now: number, dt: number): void {
   if (!fish.isAi || !fish.aiState) return;
   const state = fish.aiState;
   const rng = world.rng;
   const sightR2 = AI.sightRadius * AI.sightRadius;
+
+  // Lazy-init aggro fields: the cucumber harness builds AiState literals that omit them (tests are
+  // not typechecked), so default them here rather than assume spawnAiFish ran.
+  if (!state.aggro) state.aggro = new Map();
+  if (state.aggroJitter === undefined) state.aggroJitter = 0;
+  if (state.angeredTargetId === undefined) state.angeredTargetId = null;
+  if (state.chaseCommitUntil === undefined) state.chaseCommitUntil = 0;
+  if (state.chaseLastKnownX === undefined) state.chaseLastKnownX = 0;
+  if (state.chaseLastKnownY === undefined) state.chaseLastKnownY = 0;
+  if (state.feedTargetId === undefined) state.feedTargetId = null;
 
   // Stuck sampling: every stuckSampleIntervalMs, check whether the fish moved
   // far enough. After stuckTriggerMs of not moving, blacklist the current target
@@ -132,10 +195,15 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
       state.stuckSince != null &&
       now - state.stuckSince >= AI.stuckTriggerMs
     ) {
-      if (state.targetId != null) {
-        state.blacklist.set(state.targetId, now + AI.blacklistDurationMs);
+      // Blacklist whatever we were locked onto (committed angered target or plain targetId) and
+      // drop its aggro so the commit scan below can't immediately re-anger us at the same fish.
+      const lost = state.targetId ?? state.angeredTargetId;
+      if (lost != null) {
+        state.blacklist.set(lost, now + AI.blacklistDurationMs);
+        state.aggro.delete(lost);
       }
       state.targetId = null;
+      state.angeredTargetId = null;
       state.targetSince = now;
       state.mode = "wander";
       state.modeUntil = now + 1500;
@@ -268,6 +336,32 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     chosenPrey = nearestPrey ?? currentPrey;
   }
 
+  // --- Aggro meters (deterministic, no RNG) ---
+  // The nearest edible prey loitering inside AGGRO.radius ramps its meter; every other entry
+  // decays and is pruned. Nibble damage adds to meters out-of-band via addAggro() (world.ts).
+  const aggroR2 = AGGRO.radius * AGGRO.radius;
+  let rampId: EntityId | null = null;
+  if (chosenPrey) {
+    const pdx = chosenPrey.x - fish.x;
+    const pdy = chosenPrey.y - fish.y;
+    if (pdx * pdx + pdy * pdy <= aggroR2) rampId = chosenPrey.id;
+  }
+  const aggroDecay = AGGRO.decayPerSec * dt;
+  for (const [id, v] of state.aggro) {
+    if (id === rampId) continue;
+    const nv = v - aggroDecay;
+    if (nv <= 0) state.aggro.delete(id);
+    else state.aggro.set(id, nv);
+  }
+  if (rampId !== null) {
+    state.aggro.set(rampId, Math.min(AGGRO.maxMeter, (state.aggro.get(rampId) ?? 0) + AGGRO.rampPerSec * dt));
+  }
+
+  // Feeding frenzy: nearest dropped XP ball within screen range (FRENZY). Computed before the mode
+  // chain so it can slot in as a branch below flee but above chase/wander. Guarded by chunks.size
+  // so the common (no drops on the map) case does zero work.
+  const feedChunk = world.chunks.size > 0 ? nearestFeedChunk(world, fish, state) : null;
+
   let speed: number = AI.wanderSpeed;
   let tvx = Math.cos(state.wanderHeading);
   let tvy = Math.sin(state.wanderHeading);
@@ -303,23 +397,107 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     tvx = dx / len;
     tvy = dy / len;
     speed = fleeSpeedAt(now - state.fleeStartedAt);
-  } else if (chosenPrey) {
-    if (state.targetId !== chosenPrey.id) {
-      state.targetId = chosenPrey.id;
-      state.targetSince = now;
-    }
-    state.mode = "chase";
+  } else if (feedChunk) {
+    // --- Feeding frenzy: rush the nearest dropped XP ball (FRENZY). Sits below flee (a predator
+    // in sight already took the branches above, so small fish never suicide for food) but above
+    // chase/wander, so a kill's gold shower pulls every nearby fish off whatever it was doing.
+    // angeredTargetId is left intact, so the fish resumes its hunt once the balls are gone. ---
+    state.mode = "feed";
     state.modeUntil = now + 1500;
-    const dx = chosenPrey.x - fish.x;
-    const dy = chosenPrey.y - fish.y;
+    state.feedTargetId = feedChunk.id;
+    const dx = feedChunk.x - fish.x;
+    const dy = feedChunk.y - fish.y;
     const len = Math.hypot(dx, dy) || 1;
     tvx = dx / len;
     tvy = dy / len;
-    speed = AI.chaseSpeed;
-  } else if (state.targetId !== null) {
-    state.targetId = null;
-    state.targetSince = now;
+    speed = FRENZY.speed;
+  } else {
+    // --- Angered chase (replaces immediate prey-on-sight chase) ---
+    // Fish no longer chase prey the instant it's in range. A target chases only once its aggro
+    // meter (built by loitering in AGGRO.radius and/or nibble damage) crosses the per-fish
+    // commit threshold; then it pursues out to AGGRO.leashRadius (well past sight) with a
+    // last-known grace, so it's much harder to shake. Drops when the meter decays out or the
+    // target is lost past the leash.
+    const commitLevel = AGGRO.commitThreshold + state.aggroJitter * AGGRO.jitterSpan;
+    const leash2 = AGGRO.leashRadius * AGGRO.leashRadius;
+
+    // Drop a stale commitment (target gone or cooled off below dropThreshold).
+    if (state.angeredTargetId !== null) {
+      const t = world.fish.get(state.angeredTargetId);
+      const meter = state.aggro.get(state.angeredTargetId) ?? 0;
+      if (!t || !t.alive || meter < AGGRO.dropThreshold) state.angeredTargetId = null;
+    }
+    // Commit to the highest-meter target that has crossed the (jittered) threshold and is in leash.
+    if (state.angeredTargetId === null) {
+      let bestId: EntityId | null = null;
+      let bestMeter = commitLevel;
+      for (const [id, v] of state.aggro) {
+        if (v < bestMeter) continue;
+        if (state.blacklist.has(id)) continue; // don't re-anger at a blacklisted (stuck-recovery) target
+        const t = world.fish.get(id);
+        if (!t || !t.alive) continue;
+        const ddx = t.x - fish.x;
+        const ddy = t.y - fish.y;
+        if (ddx * ddx + ddy * ddy > leash2) continue;
+        bestMeter = v;
+        bestId = id;
+      }
+      if (bestId !== null) {
+        state.angeredTargetId = bestId;
+        state.chaseCommitUntil = now + AGGRO.loseMemoryMs;
+      }
+    }
+
+    if (state.angeredTargetId !== null) {
+      const t = world.fish.get(state.angeredTargetId);
+      if (t && t.alive) {
+        const ddx = t.x - fish.x;
+        const ddy = t.y - fish.y;
+        const d2 = ddx * ddx + ddy * ddy;
+        if (d2 <= leash2) {
+          // In leash: chase the target directly, refresh last-known + grace.
+          if (state.targetId !== t.id) { state.targetId = t.id; state.targetSince = now; }
+          state.mode = "chase";
+          state.modeUntil = now + 1500;
+          state.chaseLastKnownX = t.x;
+          state.chaseLastKnownY = t.y;
+          state.chaseCommitUntil = now + AGGRO.loseMemoryMs;
+          const len = Math.hypot(ddx, ddy) || 1;
+          tvx = ddx / len;
+          tvy = ddy / len;
+          speed = AI.chaseSpeed;
+          // Keep the meter hot while actively engaging up close (if not already the ramp target).
+          if (d2 <= aggroR2 && rampId !== t.id) {
+            state.aggro.set(t.id, Math.min(AGGRO.maxMeter, (state.aggro.get(t.id) ?? 0) + AGGRO.rampPerSec * dt));
+          }
+        } else if (now < state.chaseCommitUntil) {
+          // Slipped past the leash but still within the grace window — pursue last-known.
+          state.mode = "chase";
+          state.modeUntil = now + 1500;
+          const dx = state.chaseLastKnownX - fish.x;
+          const dy = state.chaseLastKnownY - fish.y;
+          const len = Math.hypot(dx, dy) || 1;
+          tvx = dx / len;
+          tvy = dy / len;
+          speed = AI.chaseSpeed;
+        } else {
+          // Lost it — give up and return to wandering.
+          state.angeredTargetId = null;
+          if (state.targetId !== null) { state.targetId = null; state.targetSince = now; }
+        }
+      } else {
+        state.angeredTargetId = null;
+        if (state.targetId !== null) { state.targetId = null; state.targetSince = now; }
+      }
+    } else if (state.targetId !== null) {
+      state.targetId = null;
+      state.targetSince = now;
+    }
   }
+
+  // Drop the feed target whenever we're not actively feeding, so a stale id can't leak into the
+  // hysteresis in nearestFeedChunk on a later frenzy.
+  if (state.mode !== "feed") state.feedTargetId = null;
 
   // Smooth wall repulsion field. Contributes 0 when far from any wall and
   // ramps up with a squared falloff as distance shrinks toward zero. Strong

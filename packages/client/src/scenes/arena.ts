@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, Text } from "pixi.js";
 import { AdvancedBloomFilter } from "pixi-filters/advanced-bloom";
 import { RGBSplitFilter } from "pixi-filters/rgb-split";
 import type { EntityDelta, SnapshotMsg, WelcomeMsg, EatenMsg, LeaderboardMsg, YouPassiveSlot, YouWeaponSlot, LevelUpMsg, ZapEvent } from "@fcf/shared";
-import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
+import { ARENA, BITE, FISH, MOUTH, TICK, MAX_SLOTS, DEFAULT_SPECIES_ID, canEat, canSwallow, colorForSpecies, fishRadius, stepFishMovement, sampleAt, deadReckon, boostDurationMs, WEAPONS, getWeaponLevel, PASSIVES, viewRadius, isEvolutionWeapon, EVOLUTIONS } from "@fcf/shared";
 import type { PassiveId, WeaponId, TimedSample } from "@fcf/shared";
 import { mountSkillPanel, type SkillPanelMount } from "../hud/skill-panel.ts";
 import { NetSocket } from "../net/socket.ts";
@@ -14,6 +14,7 @@ import { InkBlob } from "../render/ink.ts";
 import { ZapEffect } from "../render/lightning.ts";
 import { ParticleSystem } from "../render/particles.ts";
 import { WaterCausticFilter } from "../render/water-filter.ts";
+import { iconUrl, GEAR_SVG } from "../render/icons.ts";
 import { mountLevelUp, type LevelUpMount } from "./level-up.ts";
 import { mountToastHud, type ToastHud } from "../hud/toast.ts";
 import { mountRosterHud, type RosterHud } from "../hud/roster.ts";
@@ -60,6 +61,9 @@ interface ChunkState {
   mass: number;
   color: number;
   gfx: Graphics;
+  /** Swallow ball only: server wall-time before which it's uncollectable by anyone. Drives the
+   *  "charging" pulse cue and keeps optimisticEat from hiding it before the lock expires. */
+  collectableAt?: number;
 }
 
 interface ProjectileState {
@@ -109,6 +113,8 @@ const INTERP_DELAY_MS = 150;
 const MAX_EXTRAP_MS = 100;
 /** Per-entity sample-buffer length. 10 ticks ≈ 500ms history covers the 150ms delay + 100ms extrap + bursty jitter. */
 const SAMPLE_CAP = 10;
+/** Duration of the "swallowed whole" suck-in animation: the victim sprite tweens into the eater's mouth and shrinks. */
+const SWALLOW_ANIM_MS = 280;
 
 /**
  * Projectiles are rendered at the PRESENT (not INTERP_DELAY_MS in the past like fish/chunks) so a
@@ -178,6 +184,8 @@ export class ArenaScene {
   private chunks = new Map<number, ChunkState>();
   private projectiles = new Map<number, ProjectileState>();
   private inkBlobs = new Map<number, InkBlob>();
+  /** Victims being swallowed whole: their sprite is pulled out of `fishes` and tweened into the eater. */
+  private swallowing = new Map<number, { sprite: FishSprite; eaterId: number; ageMs: number; startX: number; startY: number }>();
   private zaps: ZapEffect[] = [];
   private selfId = 0;
   private serverNow = 0;
@@ -278,6 +286,9 @@ export class ArenaScene {
     this.app = app;
     this.net = net;
     this.callbacks = callbacks;
+    // Read-only debug/test accessor: current nameplate text per fish (incl. any 💀 danger prefix).
+    (window as any).__nameplates = () =>
+      Array.from(this.fishes.values()).map((f) => ({ name: f.name, label: f.sprite.getLabelText() }));
     this.hud = mountHud();
     this.toastHud = mountToastHud();
     this.rosterHud = mountRosterHud();
@@ -314,12 +325,17 @@ export class ArenaScene {
 
     // Caustic water shader is overlaid on the base background.
     this.bg.filters = [this.waterFilter];
+    // NB: do NOT set projectileLayer.filterArea. PixiJS reads filterArea in the
+    // layer's LOCAL space and multiplies it by worldTransform
+    // (FilterSystem._calculateFilterArea). Because projectileLayer rides inside the
+    // camera-transformed `world`, a screen-space rect like app.screen becomes a box
+    // pinned to the WORLD origin that slides off the viewport as the camera pans up/
+    // left — clipping every bloomed item (bullets + zaps) in a band near the map's
+    // top-left. Letting PixiJS auto-size the bloom from global bounds is camera-
+    // correct; bloomFilter.padding (set above) keeps the glow halo from clipping at
+    // those bounds. (The "drift band" this once worked around was ZapEffect anchoring
+    // the layer bounds to (0,0); that's fixed at the source in render/lightning.ts.)
     this.projectileLayer.filters = [this.bloomFilter];
-    // Pin the bloom's sample area to the viewport. Without this, PixiJS sizes
-    // the filter render texture from projectileLayer's auto-computed bounds —
-    // which drift as projectiles/zaps move, leaving a screen-space band where
-    // projectiles fall outside the texture and render as nothing for a frame.
-    this.projectileLayer.filterArea = this.app.screen;
     // Blur fuses the individual soft ink blobs into one continuous, diffusing cloud.
     const inkBlur = new BlurFilter({ strength: 7, quality: 2 });
     inkBlur.padding = 24;
@@ -737,6 +753,12 @@ export class ArenaScene {
       }
     }
 
+    // Fish swallowed whole this tick: hand the victim's sprite to the suck-in animation BEFORE the
+    // removed loop, so the matching `removed` entry is a no-op (the swallow owns the teardown).
+    if (msg.swallowed && msg.swallowed.length > 0) {
+      for (const s of msg.swallowed) this.beginSwallow(s.id, s.by);
+    }
+
     for (const id of msg.removed) {
       this.handleEntityRemoved(id);
       this.removeEntity(id);
@@ -901,8 +923,9 @@ export class ArenaScene {
       f.species = ent.species;
       f.sprite.setSpecies(ent.species);
     }
-    // Transient bite flag: the server set this on the tick this fish bit prey. Play its chomp.
-    if (ent.biting) f.sprite.triggerBite();
+    // Transient bite flags (set on the tick this fish swallowed prey / nibbled a bigger fish).
+    if (ent.biting) f.sprite.triggerBite("eat");
+    if (ent.nibbling) f.sprite.triggerBite("nibble");
   }
 
   private applyPelletDelta(ent: EntityDelta): void {
@@ -942,12 +965,27 @@ export class ArenaScene {
     let c = this.chunks.get(ent.id);
     if (!c) {
       const gfx = new Graphics();
-      const color = ent.color ? parseColor(ent.color) : 0xffd97f;
-      const r = Math.max(4, Math.sqrt(ent.mass ?? 4) * 1.6);
-      gfx
-        .circle(0, 0, r)
-        .fill({ color, alpha: 0.9 })
-        .stroke({ color: 0xffffff, width: 1, alpha: 0.6 });
+      // Any xp-bearing chunk is a gold XP ball: the big swallow ball (visualMass 60) and the swarm
+      // of small death-drop balls (visualMass 10) both render gold, sized by mass. The fish-colored
+      // branch is a fallback for any non-xp chunk (none spawned today).
+      const isXpBall = ent.xp !== undefined;
+      const color = isXpBall ? 0xffe066 : (ent.color ? parseColor(ent.color) : 0xffd97f);
+      if (isXpBall) {
+        // A bright gold core wrapped in a soft glow so XP reads as a reward; the 6px floor keeps the
+        // small death-drop balls visible while the mass-60 swallow ball still pops large.
+        const r = Math.max(6, Math.sqrt(ent.mass ?? 4) * 2.2);
+        gfx
+          .circle(0, 0, r * 1.7).fill({ color: 0xffe066, alpha: 0.16 })
+          .circle(0, 0, r * 1.25).fill({ color: 0xffe066, alpha: 0.28 })
+          .circle(0, 0, r).fill({ color: 0xfff2a8, alpha: 1 })
+          .stroke({ color: 0xfff6c0, width: 2, alpha: 0.95 });
+      } else {
+        const r = Math.max(4, Math.sqrt(ent.mass ?? 4) * 1.6);
+        gfx
+          .circle(0, 0, r)
+          .fill({ color, alpha: 0.9 })
+          .stroke({ color: 0xffffff, width: 1, alpha: 0.6 });
+      }
       gfx.x = ent.x;
       gfx.y = ent.y;
       this.chunkLayer.addChild(gfx);
@@ -957,6 +995,7 @@ export class ArenaScene {
         mass: ent.mass ?? 4,
         color,
         gfx,
+        collectableAt: ent.collectableAt,
       };
       this.chunks.set(ent.id, c);
       return;
@@ -1069,6 +1108,9 @@ export class ArenaScene {
     }
     for (const c of this.chunks.values()) {
       if (!c.gfx.visible) continue;
+      // A locked swallow ball can't be eaten yet — don't optimistically hide it, or it would
+      // vanish locally while the server keeps it for the full 2s lock.
+      if (c.collectableAt !== undefined && this.serverNow < c.collectableAt) continue;
       const dx = cx - c.gfx.x, dy = cy - c.gfx.y;
       if (dx * dx + dy * dy <= r2) c.gfx.visible = false;
     }
@@ -1104,12 +1146,12 @@ export class ArenaScene {
   }
 
   /**
-   * Own-fish bite: when our rendered fish contacts an EDIBLE enemy from any angle, play the
-   * mouth-open chomp animation and arm a one-shot forward lunge (consumed next stepSelf). The
-   * server resolves the actual eat — now omnidirectional contact-based — right after, so the
-   * lurch and the kill stay in sync. Cooldown-gated so sustained contact doesn't stack lunges.
-   * Mirrors optimisticEat / detectClientHits: self center is the predicted render position,
-   * enemies use their rendered sprite positions.
+   * Own-fish bite prediction (animation + lunge only; the server resolves the real eat/nibble/burp
+   * from our reported position). Mirrors the server rules so we don't mispredict:
+   *  - EAT: a fish we can swallow, contacted within our FRONT mouth cone → big chomp + strong lurch.
+   *  - NIBBLE: a BIGGER fish we're touching from any angle → quick nip + small dart-in.
+   * Uses our reported heading (selfHx/selfHy — exactly what the server cones against) and the
+   * predicted render position. Cooldown-gated so sustained contact doesn't stack lunges.
    */
   private detectBites(now: number): void {
     if (now - this.selfLastBiteAt < BITE.cooldownMs) return;
@@ -1120,15 +1162,37 @@ export class ArenaScene {
     const cy = this.selfRenderY;
     for (const f of this.fishes.values()) {
       if (f.id === this.selfId) continue;
-      if (!canEat(this.youMass, f.mass)) continue; // only lurch at prey we can actually eat
       const dx = f.sprite.container.x - cx;
       const dy = f.sprite.container.y - cy;
-      const reach = rSelf + fishRadius(f.mass) + BITE.contactPad;
-      if (dx * dx + dy * dy > reach * reach) continue;
-      this.selfLastBiteAt = now;
-      this.pendingLunge = BITE.lungeImpulse;
-      me.sprite.triggerBite();
-      break;
+      const dist = Math.hypot(dx, dy);
+      if (dist > rSelf + fishRadius(f.mass) + BITE.contactPad) continue; // not in contact
+      if (canSwallow(this.youMass, f.mass)) {
+        // Eating requires facing the prey (front cone) — matches the server's front-of-face rule.
+        const dot = dist > 0.001 ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;
+        if (dot < MOUTH.coneCos) continue;
+        this.selfLastBiteAt = now;
+        this.pendingLunge = BITE.eatLungeImpulse;
+        me.sprite.triggerBite("eat");
+        return;
+      }
+      if (f.mass > this.youMass) {
+        // Smaller than this fish → nibble it (any angle).
+        this.selfLastBiteAt = now;
+        this.pendingLunge = BITE.lungeImpulse * 0.5;
+        me.sprite.triggerBite("nibble");
+        return;
+      }
+      if (this.youMass >= f.mass) {
+        // Bigger than this fish but can't swallow it yet (the "between zone"), or equal size →
+        // light BITE. Requires facing the prey (front cone), matching the server's bite rule; the
+        // server resolves the real damage from our reported position. A fuller lunge than a nibble.
+        const dot = dist > 0.001 ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;
+        if (dot < MOUTH.coneCos) continue;
+        this.selfLastBiteAt = now;
+        this.pendingLunge = BITE.lungeImpulse;
+        me.sprite.triggerBite("nibble");
+        return;
+      }
     }
   }
 
@@ -1187,6 +1251,52 @@ export class ArenaScene {
     }
   }
 
+  /**
+   * Begin the "swallowed whole" animation: pull the victim's sprite out of the interpolation set
+   * (so the upcoming `removed` entry is a no-op) and hand it to the suck-in tween, which pulls it
+   * into the eater and shrinks it. A chomp burst punctuates the gulp. Skipped for our own fish (the
+   * death scene takes over) and for victims we aren't currently tracking.
+   */
+  private beginSwallow(victimId: number, eaterId: number): void {
+    if (victimId === this.selfId) return;
+    const f = this.fishes.get(victimId);
+    if (!f) return;
+    this.fishes.delete(victimId);
+    this.fishHeading.delete(victimId);
+    const m = this.mouthIndicators.get(victimId);
+    if (m) { m.destroy(); this.mouthIndicators.delete(victimId); }
+    this.particles.emitChomp(f.sprite.container.x, f.sprite.container.y, parseColor(f.color), f.mass);
+    if (f.mass > 18) snd.playShatter(0.7);
+    this.swallowing.set(victimId, {
+      sprite: f.sprite,
+      eaterId,
+      ageMs: 0,
+      startX: f.sprite.container.x,
+      startY: f.sprite.container.y,
+    });
+  }
+
+  /** Advance any in-progress swallow tweens: pull the victim into the eater's mouth, shrink + fade, then destroy. */
+  private advanceSwallows(dtMs: number): void {
+    if (this.swallowing.size === 0) return;
+    for (const [id, sw] of this.swallowing) {
+      sw.ageMs += dtMs;
+      const t = Math.min(1, sw.ageMs / SWALLOW_ANIM_MS);
+      const eater = this.fishes.get(sw.eaterId);
+      const tx = eater ? eater.sprite.container.x : sw.startX;
+      const ty = eater ? eater.sprite.container.y : sw.startY;
+      const k = 1 - (1 - t) * (1 - t); // ease-out toward the mouth
+      sw.sprite.container.x = sw.startX + (tx - sw.startX) * k;
+      sw.sprite.container.y = sw.startY + (ty - sw.startY) * k;
+      sw.sprite.container.scale.set(Math.max(0.01, 1 - t));
+      sw.sprite.container.alpha = 1 - t * 0.7;
+      if (t >= 1) {
+        sw.sprite.destroy();
+        this.swallowing.delete(id);
+      }
+    }
+  }
+
   private tick = () => {
     if (this.destroyed) return;
     const now = performance.now();
@@ -1223,6 +1333,9 @@ export class ArenaScene {
       const serverHeading = this.fishHeading.get(f.id);
       f.sprite.setTransform(s.x, s.y, s.vx, s.vy, serverHeading, dt);
       f.sprite.update(f.mass, dt);
+      // Flag fish that can swallow the local player (≥15% bigger) with a 💀 nameplate prefix,
+      // so you can see at a glance which neighbours are deadly. Self is handled above (never flagged).
+      f.sprite.setDanger(this.mode === "play" && canSwallow(f.mass, this.youMass));
     }
     fishSpan.end();
 
@@ -1232,8 +1345,23 @@ export class ArenaScene {
       if (!s) continue;
       c.gfx.x = s.x;
       c.gfx.y = s.y;
+      // Locked swallow ball: pulse translucent + slightly small to read as "charging / not yet
+      // grabbable", then snap to full once the 2s lock expires and anyone can scoop it.
+      if (c.collectableAt !== undefined) {
+        if (this.serverNow < c.collectableAt) {
+          const pulse = 0.5 + 0.5 * Math.sin(renderTime / 110);
+          c.gfx.alpha = 0.35 + 0.35 * pulse;
+          c.gfx.scale.set(0.82 + 0.12 * pulse);
+        } else if (c.gfx.alpha !== 1) {
+          c.gfx.alpha = 1;
+          c.gfx.scale.set(1);
+        }
+      }
     }
     chunkSpan.end();
+
+    // Suck-in tweens for fish being swallowed whole (driven by server `swallowed` events).
+    this.advanceSwallows(dt * 1000);
 
     const projSpan = perf.begin("proj-interp");
     // Projectiles render at the PRESENT (not renderTime, which is INTERP_DELAY_MS in the past) so
@@ -1425,14 +1553,12 @@ export class ArenaScene {
         slot.root.classList.remove("empty");
         slot.root.classList.remove("actionable");
         if (!def) {
-          slot.icon.textContent = "?";
-          slot.icon.style.color = "";
+          setPipUnknown(slot.icon);
           slot.label.textContent = "";
           slot.cooldown.style.background = "transparent";
           continue;
         }
-        slot.icon.textContent = weaponGlyph(wpn.id);
-        slot.icon.style.color = weaponColor(wpn.id);
+        setPipIcon(slot.icon, wpn.id);
         slot.label.textContent = isEvolutionWeapon(wpn.id as any) ? "E" : `L${wpn.level}`;
         slot.root.classList.toggle("evo-pair", evoPairWeapons.has(wpn.id));
         const lvl = getWeaponLevel(wpn.id as any, wpn.level);
@@ -1459,8 +1585,7 @@ export class ArenaScene {
       if (!p) {
         slot.root.classList.add("empty");
         slot.root.classList.toggle("actionable", pickPending);
-        slot.icon.textContent = "";
-        slot.icon.style.color = "";
+        clearPipIcon(slot.icon);
         slot.label.textContent = "";
         slot.cooldown.style.background = "transparent";
         continue;
@@ -1470,13 +1595,11 @@ export class ArenaScene {
       const def = PASSIVES[p.id as PassiveId];
       slot.cooldown.style.background = "transparent";
       if (!def) {
-        slot.icon.textContent = "?";
-        slot.icon.style.color = "";
+        setPipUnknown(slot.icon);
         slot.label.textContent = "";
         continue;
       }
-      slot.icon.textContent = passiveGlyph(p.id);
-      slot.icon.style.color = passiveColor(p.id);
+      setPipIcon(slot.icon, p.id);
       slot.label.textContent = `${p.stack}/${def.maxStack}`;
       slot.root.classList.toggle("evo-pair", evoPairPassives.has(p.id));
     }
@@ -1779,6 +1902,7 @@ export class ArenaScene {
     this.stopSpectatorHeartbeat();
     this.input.teardown();
     for (const f of this.fishes.values()) f.sprite.destroy();
+    for (const sw of this.swallowing.values()) sw.sprite.destroy();
     for (const p of this.pellets.values()) p.gfx.destroy();
     for (const fr of this.fruits.values()) fr.container.destroy({ children: true });
     for (const c of this.chunks.values()) c.gfx.destroy();
@@ -1850,7 +1974,7 @@ function mountHud(): HudElements {
         <div class="hud-stat">
           <div><div class="label">Players</div><div class="value" data-players>1</div></div>
         </div>
-        <button class="hud-gear" type="button" data-gear aria-label="Edit fish">⚙</button>
+        <button class="hud-gear" type="button" data-gear aria-label="Edit fish">${GEAR_SVG}</button>
       </div>
     </div>
     <div class="hud-skills" data-skills>
@@ -1899,68 +2023,20 @@ function mountDamageLayer(): HTMLDivElement {
   return layer;
 }
 
-function weaponGlyph(id: string): string {
-  switch (id) {
-    case "bubble":  return "○";
-    case "spine":   return "✦";
-    case "pulse":   return "⚡";
-    case "ink":     return "●";
-    case "piranha": return "◣";
-    case "tidal":   return "≈";
-    case "puffer":  return "✺";
-    case "eel":     return "⚡";
-    case "kraken":  return "✦";
-    case "school":  return "◤";
-    case "alien":   return "⊙";
-    case "overlord":return "◉";
-    default:        return "?";
-  }
+/** Paint a weapon/passive ability icon into a skill pip (CSS background-image). */
+function setPipIcon(el: HTMLElement, id: string): void {
+  el.textContent = "";
+  el.style.backgroundImage = `url("${iconUrl(id)}")`;
 }
 
-function passiveGlyph(id: string): string {
-  switch (id) {
-    case "fin":      return "↯";
-    case "gulp":     return "★";
-    case "scales":   return "❖";
-    case "teeth":    return "▲";
-    case "reflex":   return "↻";
-    case "magnet":   return "◎";
-    case "recovery": return "+";
-    case "hungry":   return "◆";
-    case "closeEncounters": return "✴";
-    default:         return "?";
-  }
+/** Empty slot — no icon, no glyph. */
+function clearPipIcon(el: HTMLElement): void {
+  el.textContent = "";
+  el.style.backgroundImage = "none";
 }
 
-function passiveColor(id: string): string {
-  switch (id) {
-    case "fin":      return "#7fffa1";
-    case "gulp":     return "#ffe884";
-    case "scales":   return "#9ad8ff";
-    case "teeth":    return "#ff9070";
-    case "reflex":   return "#b6ecff";
-    case "magnet":   return "#bf94e6";
-    case "recovery": return "#ff7ba7";
-    case "hungry":   return "#ffcb70";
-    case "closeEncounters": return "#66ffff";
-    default:         return "#ffffff";
-  }
-}
-
-function weaponColor(id: string): string {
-  switch (id) {
-    case "bubble":  return "#e6c34a";
-    case "spine":   return "#ffe884";
-    case "pulse":   return "#7fcfff";
-    case "ink":     return "#78dc3c";
-    case "piranha": return "#ff9070";
-    case "tidal":   return "#ffd24a";
-    case "puffer":  return "#ffe884";
-    case "eel":     return "#b088ff";
-    case "kraken":  return "#96f550";
-    case "school":  return "#ff6f30";
-    case "alien":   return "#66ff88";
-    case "overlord":return "#66ffff";
-    default:        return "#ffffff";
-  }
+/** Safety fallback for an id with no matching icon/def (shouldn't happen in practice). */
+function setPipUnknown(el: HTMLElement): void {
+  el.style.backgroundImage = "none";
+  el.textContent = "?";
 }

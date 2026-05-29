@@ -183,11 +183,11 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       evolution: string | null;
     }
     const deadPlayers: DeadPlayer[] = [];
-    const allDead: Array<{ x: number; y: number; mass: number; color: string }> = [];
+    const allDead: Array<{ x: number; y: number; mass: number; color: string; level: number; eatenWhole: boolean }> = [];
 
     for (const f of world.fish.values()) {
       if (f.alive) continue;
-      allDead.push({ x: f.x, y: f.y, mass: f.mass, color: f.color });
+      allDead.push({ x: f.x, y: f.y, mass: f.mass, color: f.color, level: f.level, eatenWhole: !!f.eatenWhole });
       if (!f.isAi && f.socketId) {
         // Disconnects don't credit a nearby fish; the toast on other clients
         // keys "left" off byName === "the void". This also closes the
@@ -236,13 +236,13 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       }
     }
 
-    // spawn chunks and remove all dead fish
+    // spawn death drops and remove all dead fish. Fish swallowed WHOLE drop nothing here — their
+    // XP was already burped from the eater's mouth (see world.ts eat block). DAMAGE kills
+    // (weapon/nibble) scatter the victim's XP as a swarm of collectable balls at the body
+    // (World.spawnDeathDrops) — the killer gets no automatic XP, so anyone can contest the loot.
     for (const d of allDead) {
-      const chunkCount = Math.min(8, Math.max(2, Math.ceil(d.mass / 12)));
-      const each = (d.mass * 0.6) / chunkCount;
-      for (let i = 0; i < chunkCount; i++) {
-        world.spawnChunk(d.x, d.y, each, d.color, wallNow);
-      }
+      if (d.eatenWhole) continue;
+      world.spawnDeathDrops(d.x, d.y, d.mass, d.color, d.level, wallNow);
     }
     for (const [id, f] of world.fish) {
       if (!f.alive) world.removeFish(id);
@@ -370,10 +370,11 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     // Join/death events also push an immediate roster — see broadcastRoster() above.
     if (world.tick % 10 === 0) broadcastRoster();
 
-    // clear removed buffer + hit/zap events now that all snapshots have been built
+    // clear removed buffer + hit/zap/swallow events now that all snapshots have been built
     world.removedIds.length = 0;
     world.hitEvents.length = 0;
     world.zapEvents.length = 0;
+    world.swallowEvents.length = 0;
   }, TICK.ms);
 
   // HTTP + WS server

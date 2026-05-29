@@ -1,11 +1,11 @@
-import { WEAPONS, getWeaponLevel, FISH, fishRadius, viewRadius, xpDroppedOnDeath } from "@fcf/shared";
+import { WEAPONS, getWeaponLevel, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
 import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState } from "./entity.ts";
 import type { World } from "./world.ts";
-import { getWeaponDamageMult, getWeaponCooldownMult, getDamageTakenMult } from "./passives.ts";
+import { getWeaponDamageBonus, getWeaponCooldownMult, getDamageTakenReduction } from "./passives.ts";
 
-// Spatial-hash query pad must cover the largest fish radius in play (~200 at mass 300).
-const MAX_FISH_RADIUS_PAD = 200;
+/** Every hit always lands at least this much, so flat armor (Full Metal) can't fully nullify a weapon. */
+const MIN_HIT_DAMAGE = 1;
 
 /**
  * On-screen test: is (x, y) within the owner's view radius? Mirrors the snapshot
@@ -27,18 +27,21 @@ function withinOwnerView(owner: Fish, x: number, y: number, viewR2: number): boo
  * hit event for client-side feedback.
  */
 function applyHit(world: World, target: Fish, owner: Fish, damage: number, weaponId: WeaponId): void {
-  const resist = target.isAi ? 1 : getDamageTakenMult(target);
-  const massLoss = damage * FISH.damageMassLossRatio * resist;
-  target.mass -= massLoss;
+  // Full Metal subtracts a flat amount from incoming damage (floored at MIN_HIT_DAMAGE so armor
+  // never fully nullifies a weapon). The post-armor value is what's drained, credited, and shown —
+  // so the floating damage number reflects what the target actually took.
+  const reduction = target.isAi ? 0 : getDamageTakenReduction(target);
+  const dealt = Math.max(MIN_HIT_DAMAGE, damage - reduction);
+  target.mass -= dealt * FISH.damageMassLossRatio;
   // Credit the firer's leaderboard stats. AI never fire, but guard anyway.
   if (!owner.isAi) {
     owner.hits += 1;
-    owner.damageDealt += damage;
+    owner.damageDealt += dealt;
   }
   world.hitEvents.push({
     x: target.x,
     y: target.y,
-    damage,
+    damage: dealt,
     targetId: target.id,
     ownerId: owner.id,
     weaponId,
@@ -51,8 +54,33 @@ function applyHit(world: World, target: Fish, owner: Fish, damage: number, weapo
     target.killedByName = owner.name;
     target.killedByMass = owner.mass;
     if (!owner.isAi) {
+      // Kill COUNT only — no automatic XP. The victim's XP scatters as collectable balls at the
+      // corpse (see World.spawnDeathDrops); the killer earns it by swimming over to pick it up, the
+      // same as everyone else, so a kill becomes a contested scrum instead of a free reward.
       owner.kills += 1;
-      owner.xp += xpDroppedOnDeath(target.level, target.mass);
+    }
+  }
+}
+
+/**
+ * Apply a nibble: a smaller fish biting a bigger one (the fish-eat loop calls this when a fish
+ * contacts a bigger fish it can't swallow). Drains the target's mass (mass is health) like a weapon
+ * hit, but with no weaponId/HitEvent — feedback is the chomp animation — and without crediting
+ * weapon stats (hits/damage are weapon-only). A nibble that drains the target to zero kills it and
+ * credits the nibbler (so you can chip a bigger fish to death); the corpse drops normal chunks
+ * (`eatenWhole` stays unset), exactly like a weapon kill — it was NOT swallowed whole.
+ */
+export function applyNibble(target: Fish, attacker: Fish, damage: number): void {
+  const reduction = target.isAi ? 0 : getDamageTakenReduction(target);
+  const dealt = Math.max(MIN_HIT_DAMAGE, damage - reduction);
+  target.mass -= dealt * FISH.damageMassLossRatio;
+  if (target.alive && target.mass <= 0) {
+    target.alive = false;
+    target.killedByName = attacker.name;
+    target.killedByMass = attacker.mass;
+    if (!attacker.isAi) {
+      // Kill COUNT only — no automatic XP (the victim's XP drops as collectable balls). See applyHit.
+      attacker.kills += 1;
     }
   }
 }
@@ -70,12 +98,12 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
   if (fish.pendingLevelUp.length > 0 && !fish.levelUpDismissed) return;
 
   const cdMult = getWeaponCooldownMult(fish);
-  const dmgMult = getWeaponDamageMult(fish);
+  const dmgBonus = getWeaponDamageBonus(fish);
 
   for (const slot of fish.weapons) {
     const def = WEAPONS[slot.id];
     const lvl = getWeaponLevel(slot.id, slot.level);
-    const dmg = lvl.damage * dmgMult;
+    const dmg = lvl.damage + dmgBonus;
 
     switch (def.kind) {
       case "projectile":
@@ -164,14 +192,16 @@ function fireLinear(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel
   }
 }
 
-/** Bullets in a Turret ring are spread evenly across this window (ms). */
+/** Bullets in a Turret burst are spread evenly across this window (ms). */
 const SWEEP_MS = 1000;
+/** How many full circles the Turret's spray spirals through during one sweep. */
+const SWEEP_REVOLUTIONS = 3;
 
 /**
  * Advance an in-progress Turret sweep: emit every bullet that has come due since
  * the last tick. Bullet `i` of `count` is due at `(i / count) * SWEEP_MS` into the
- * ring, so the ring sweeps a full circle over ~SWEEP_MS. Returns true once the
- * whole ring has fired.
+ * burst, so the spray spirals SWEEP_REVOLUTIONS full circles over ~SWEEP_MS. Returns
+ * true once the whole burst has fired.
  */
 function tickBurstSweep(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, now: number): boolean {
   const state = slot.state as BurstSweepState;
@@ -194,7 +224,7 @@ function tickBurstSweep(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponL
   const vhy = vmag > 1 ? fish.vy / vmag : 0;
 
   for (let i = state.firedCount; i < due; i++) {
-    const a = (i / count) * Math.PI * 2;
+    const a = (i / count) * Math.PI * 2 * SWEEP_REVOLUTIONS;
     const dirX = Math.cos(a);
     const dirY = Math.sin(a);
     const inherit = Math.max(0, dirX * vhx + dirY * vhy);   // 1 = with travel, 0 = side/behind

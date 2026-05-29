@@ -42,7 +42,7 @@ export function showTitle(prefill?: Partial<TitleResult>): Promise<TitleResult> 
             </div>
           </div>
         </div>
-        <button class="play" type="button">DIVE IN</button>
+        <button class="play" type="button">GO DEEP</button>
         <p class="help">Arrow keys / WASD to swim &middot; Space to boost</p>
       </div>
     `;

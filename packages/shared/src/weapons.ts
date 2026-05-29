@@ -70,23 +70,23 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     kind: "projectile",
     levels: [
       { damage: 1, cooldownMs: 1500, count: 1, range: 800,  speed: 380, lifetimeMs: 2200, radius: 20 },
-      { damage: 3, cooldownMs: 1400, count: 1, range: 920,  speed: 410, lifetimeMs: 2550, radius: 20 },
-      { damage: 5, cooldownMs: 1300, count: 2, range: 1050, speed: 440, lifetimeMs: 2900, radius: 20, spread: 0.22 },
-      { damage: 7, cooldownMs: 1200, count: 2, range: 1200, speed: 470, lifetimeMs: 3250, radius: 22, spread: 0.20 },
-      { damage: 9, cooldownMs: 1100, count: 3, range: 1400, speed: 500, lifetimeMs: 3600, radius: 22, spread: 0.28 },
+      { damage: 2, cooldownMs: 1400, count: 1, range: 920,  speed: 410, lifetimeMs: 2550, radius: 20 },
+      { damage: 3, cooldownMs: 1300, count: 2, range: 1050, speed: 440, lifetimeMs: 2900, radius: 20, spread: 0.22 },
+      { damage: 4, cooldownMs: 1200, count: 2, range: 1200, speed: 470, lifetimeMs: 3250, radius: 22, spread: 0.20 },
+      { damage: 5, cooldownMs: 1100, count: 3, range: 1400, speed: 500, lifetimeMs: 3600, radius: 22, spread: 0.28 },
     ],
   },
   spine: {
     id: "spine",
     name: "Turret",
-    description: "Spins a full ring of bullets, firing them one after another over a second.",
+    description: "Spins a dense spray of bullets — three full revolutions of fire over about a second.",
     kind: "radial-burst",
     levels: [
-      { damage: 1,  cooldownMs: 4000, count: 8,  range: 400, speed: 360, lifetimeMs: 1200, radius: 6 },
-      { damage: 4,  cooldownMs: 3800, count: 10, range: 440, speed: 370, lifetimeMs: 1240, radius: 6 },
-      { damage: 7,  cooldownMs: 3600, count: 12, range: 480, speed: 380, lifetimeMs: 1280, radius: 6 },
-      { damage: 10, cooldownMs: 3400, count: 14, range: 520, speed: 390, lifetimeMs: 1320, radius: 6 },
-      { damage: 13, cooldownMs: 3200, count: 16, range: 560, speed: 400, lifetimeMs: 1360, radius: 7 },
+      { damage: 1, cooldownMs: 4000, count: 24, range: 1000, speed: 520, lifetimeMs: 2000, radius: 12 },
+      { damage: 2, cooldownMs: 3800, count: 30, range: 1080, speed: 540, lifetimeMs: 2100, radius: 12 },
+      { damage: 3, cooldownMs: 3600, count: 36, range: 1160, speed: 560, lifetimeMs: 2200, radius: 13 },
+      { damage: 4, cooldownMs: 3400, count: 42, range: 1240, speed: 580, lifetimeMs: 2300, radius: 13 },
+      { damage: 5, cooldownMs: 3200, count: 48, range: 1320, speed: 600, lifetimeMs: 2400, radius: 14 },
     ],
   },
   pulse: {
@@ -100,10 +100,10 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       // MAX_PROJECTILE_RADIUS snapshot pad, and ESP draws as lightning to struck
       // fish (no fixed-radius blob), so the visual already scales with the reach.
       { damage: 1, cooldownMs: 5000, range: 2500, pulseRadius: 2500, lifetimeMs: 220, radius: 250, maxTargets: 1 },
-      { damage: 3, cooldownMs: 4800, range: 2800, pulseRadius: 2800, lifetimeMs: 220, radius: 280, maxTargets: 2 },
-      { damage: 5, cooldownMs: 4600, range: 3100, pulseRadius: 3100, lifetimeMs: 240, radius: 310, maxTargets: 3 },
-      { damage: 7, cooldownMs: 4400, range: 3400, pulseRadius: 3400, lifetimeMs: 260, radius: 340, maxTargets: 4 },
-      { damage: 9, cooldownMs: 4200, range: 3800, pulseRadius: 3800, lifetimeMs: 280, radius: 380, maxTargets: 5 },
+      { damage: 2, cooldownMs: 4800, range: 2800, pulseRadius: 2800, lifetimeMs: 220, radius: 280, maxTargets: 2 },
+      { damage: 3, cooldownMs: 4600, range: 3100, pulseRadius: 3100, lifetimeMs: 240, radius: 310, maxTargets: 3 },
+      { damage: 4, cooldownMs: 4400, range: 3400, pulseRadius: 3400, lifetimeMs: 260, radius: 340, maxTargets: 4 },
+      { damage: 5, cooldownMs: 4200, range: 3800, pulseRadius: 3800, lifetimeMs: 280, radius: 380, maxTargets: 5 },
     ],
   },
   ink: {
@@ -112,11 +112,11 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     description: "Leaves a trail of toxic waste behind you.",
     kind: "trail",
     levels: [
-      { damage: 1, cooldownMs: 0, intervalMs: 280, range: 30, lifetimeMs: 3000, radius: 30, reHitMs: 350 },
-      { damage: 2, cooldownMs: 0, intervalMs: 260, range: 34, lifetimeMs: 3000, radius: 34, reHitMs: 340 },
-      { damage: 3, cooldownMs: 0, intervalMs: 240, range: 38, lifetimeMs: 3200, radius: 38, reHitMs: 320 },
-      { damage: 4, cooldownMs: 0, intervalMs: 220, range: 42, lifetimeMs: 3400, radius: 42, reHitMs: 300 },
-      { damage: 5, cooldownMs: 0, intervalMs: 220, range: 46, lifetimeMs: 3600, radius: 46, reHitMs: 280 },
+      { damage: 1, cooldownMs: 0, intervalMs: 280, range: 120, lifetimeMs: 3000, radius: 120, reHitMs: 350 },
+      { damage: 2, cooldownMs: 0, intervalMs: 260, range: 136, lifetimeMs: 3000, radius: 136, reHitMs: 340 },
+      { damage: 3, cooldownMs: 0, intervalMs: 240, range: 152, lifetimeMs: 3200, radius: 152, reHitMs: 320 },
+      { damage: 4, cooldownMs: 0, intervalMs: 220, range: 168, lifetimeMs: 3400, radius: 168, reHitMs: 300 },
+      { damage: 5, cooldownMs: 0, intervalMs: 220, range: 184, lifetimeMs: 3600, radius: 184, reHitMs: 280 },
     ],
   },
   piranha: {
@@ -127,11 +127,11 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     levels: [
       // `range` is the orbit-path radius (~2x the old 120–180 so the tuna ride
       // clearly off the body instead of grazing it).
-      { damage: 1,  cooldownMs: 0, count: 2, range: 240, intervalMs: 3.0, radius: 28, reHitMs: 500 },
-      { damage: 4,  cooldownMs: 0, count: 2, range: 280, intervalMs: 3.2, radius: 30, reHitMs: 480 },
-      { damage: 7,  cooldownMs: 0, count: 3, range: 300, intervalMs: 3.4, radius: 30, reHitMs: 460 },
-      { damage: 10, cooldownMs: 0, count: 3, range: 320, intervalMs: 3.6, radius: 32, reHitMs: 440 },
-      { damage: 13, cooldownMs: 0, count: 4, range: 360, intervalMs: 3.8, radius: 32, reHitMs: 420 },
+      { damage: 1, cooldownMs: 0, count: 2, range: 240, intervalMs: 3.0, radius: 28, reHitMs: 500 },
+      { damage: 2, cooldownMs: 0, count: 2, range: 280, intervalMs: 3.2, radius: 30, reHitMs: 480 },
+      { damage: 3, cooldownMs: 0, count: 3, range: 300, intervalMs: 3.4, radius: 30, reHitMs: 460 },
+      { damage: 4, cooldownMs: 0, count: 3, range: 320, intervalMs: 3.6, radius: 32, reHitMs: 440 },
+      { damage: 5, cooldownMs: 0, count: 4, range: 360, intervalMs: 3.8, radius: 32, reHitMs: 420 },
     ],
   },
   alien: {
@@ -142,12 +142,12 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     levels: [
       // intervalMs = ms/shot, lifetimeMs = flight time, count = ships. `range` is HUD-only;
       // the laser targets any fish on the player's screen (viewRadius), one per shot.
-      // Only cooldownMs changes per level (−10% each); everything else stays flat.
-      { damage: 3, cooldownMs: 10000, count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
-      { damage: 3, cooldownMs: 9000,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      // Damage scales 1→5 by level; cooldownMs also shortens −10% each.
+      { damage: 1, cooldownMs: 10000, count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 2, cooldownMs: 9000,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
       { damage: 3, cooldownMs: 8100,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
-      { damage: 3, cooldownMs: 7290,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
-      { damage: 3, cooldownMs: 6561,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 4, cooldownMs: 7290,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
+      { damage: 5, cooldownMs: 6561,  count: 1, range: 2400, intervalMs: 1000, lifetimeMs: 5000, radius: 24 },
     ],
   },
   // Evolutions — defined here so the dispatcher and renderer can branch on them.
@@ -156,55 +156,55 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     id: "tidal", name: "P4uly's Gun", description: "A sweeping arc of bullets.",
     kind: "projectile", evolutionOf: "bubble",
     levels: [
-      { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
-      { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
-      { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
-      { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
-      { damage: 12, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
+      { damage: 7, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
+      { damage: 7, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
+      { damage: 7, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
+      { damage: 7, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
+      { damage: 7, cooldownMs: 1000, count: 7, range: 600, speed: 1320, lifetimeMs: 1200, radius: 14, spread: 0.9 },
     ],
   },
   puffer: {
     id: "puffer", name: "Turret Pods", description: "A permanent ring of bullets.",
     kind: "orbital", evolutionOf: "spine",
     levels: [
-      { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
-      { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
-      { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
-      { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
-      { damage: 20, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
+      { damage: 7, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
+      { damage: 7, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
+      { damage: 7, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
+      { damage: 7, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
+      { damage: 7, cooldownMs: 0, count: 14, range: 80, intervalMs: 1.6, radius: 7, reHitMs: 350 },
     ],
   },
   eel: {
     id: "eel", name: "Admin Help", description: "Calls down chain lightning on nearby fish.",
     kind: "radial-pulse", evolutionOf: "pulse", chain: true,
     levels: [
-      { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
-      { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
-      { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
-      { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
-      { damage: 15, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
+      { damage: 7, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
+      { damage: 7, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
+      { damage: 7, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
+      { damage: 7, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
+      { damage: 7, cooldownMs: 3000, range: 500, pulseRadius: 500, lifetimeMs: 320, radius: 500 },
     ],
   },
   kraken: {
     id: "kraken", name: "Rad Zone", description: "A massive lingering radioactive zone.",
     kind: "trail", evolutionOf: "ink",
     levels: [
-      { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
-      { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
-      { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
-      { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
-      { damage: 12, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
+      { damage: 7, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
+      { damage: 7, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
+      { damage: 7, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
+      { damage: 7, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
+      { damage: 7, cooldownMs: 0, intervalMs: 280, range: 90, lifetimeMs: 4500, radius: 90, reHitMs: 240 },
     ],
   },
   school: {
     id: "school", name: "Tuna Trolls", description: "Six tuna, faster bites.",
     kind: "orbital", evolutionOf: "piranha",
     levels: [
-      { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
-      { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
-      { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
-      { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
-      { damage: 20, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+      { damage: 7, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+      { damage: 7, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+      { damage: 7, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+      { damage: 7, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
+      { damage: 7, cooldownMs: 0, count: 6, range: 100, intervalMs: 4.4, radius: 18, reHitMs: 280 },
     ],
   },
   overlord: {
@@ -212,11 +212,11 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     kind: "flyby", evolutionOf: "alien",
     levels: [
       // 3 ships, each fires every 0.5s. `range` is HUD-only — targeting is screen-wide.
-      { damage: 10, cooldownMs: 10000, count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
-      { damage: 10, cooldownMs: 9000,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
-      { damage: 10, cooldownMs: 8100,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
-      { damage: 10, cooldownMs: 7290,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
-      { damage: 10, cooldownMs: 6561,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 7, cooldownMs: 10000, count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 7, cooldownMs: 9000,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 7, cooldownMs: 8100,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 7, cooldownMs: 7290,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
+      { damage: 7, cooldownMs: 6561,  count: 3, range: 2400, intervalMs: 500, lifetimeMs: 5000, radius: 24 },
     ],
   },
 };

@@ -6,7 +6,7 @@ Feature: Arena HUD reflects server state
   Background:
     Given the WebSocket is mocked
     And I open the title screen
-    And I dive in as "Alice"
+    And I go deep as "Alice"
 
   Scenario: HUD mounts on the arena scene
     Then the HUD is visible

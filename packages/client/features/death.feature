@@ -5,7 +5,7 @@ Feature: Death screen
   Background:
     Given the WebSocket is mocked
     And I open the title screen
-    And I dive in as "Alice"
+    And I go deep as "Alice"
 
   Scenario: Eaten message brings up the death screen with killer name
     When the server sends an eaten message from "Megafish"

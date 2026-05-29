@@ -4,7 +4,7 @@ Feature: Keyboard input
   Background:
     Given the WebSocket is mocked
     And I open the title screen
-    And I dive in as "Alice"
+    And I go deep as "Alice"
 
   Scenario: ArrowRight produces vx = 1
     When I press and hold "ArrowRight"

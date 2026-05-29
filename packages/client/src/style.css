@@ -584,10 +584,17 @@ button.play:active { transform: translateY(0) scale(0.99); }
 }
 
 .skill-pip-icon {
-  font-size: 1.7rem;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  font-size: 1.4rem;
   line-height: 1;
-  color: var(--accent-2);
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+  color: var(--muted);
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.55));
 }
 
 .skill-pip-label {
@@ -843,6 +850,16 @@ button.play:active { transform: translateY(0) scale(0.99); }
 @keyframes levelup-card-swap {
   0%   { transform: translateY(-8px) scale(0.96); box-shadow: 0 12px 30px rgba(0,0,0,0.4), 0 0 0 2px var(--card-accent, var(--accent-2)); }
   100% { transform: none; box-shadow: none; }
+}
+
+.levelup-card-icon {
+  width: 60px;
+  height: 60px;
+  margin-bottom: 0.85rem;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  filter: drop-shadow(0 3px 8px rgba(0,0,0,0.5));
 }
 
 .levelup-card-kind {

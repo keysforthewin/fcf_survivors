@@ -34,9 +34,10 @@ function fishDelta(f: Fish, prev: { mass?: number } | undefined, tick: number): 
   delta.vy = Math.round(f.vy);
   delta.hx = encodeHeading(f.headingX);
   delta.hy = encodeHeading(f.headingY);
-  // Transient: set only on the tick this fish bit edible prey. Drives the eater's chomp/lurch
-  // animation on every client that can see it.
+  // Transient: set only on the tick this fish swallowed prey whole / nibbled a bigger fish.
+  // Drives the eater's chomp+lurch (biting) or quick nip (nibbling) anim on every client that sees it.
   if (f.bitingTick === tick) delta.biting = true;
+  if (f.nibblingTick === tick) delta.nibbling = true;
   return delta;
 }
 
@@ -133,6 +134,11 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     if (!prev) {
       delta.color = c.color;
       delta.mass = c.mass;
+      // XP balls (swallow ball + death-drop swarm) carry an XP payload (first-seen only); the
+      // client tints them gold + grants XP on pickup.
+      if (c.xp !== undefined) delta.xp = c.xp;
+      // The swallow ball is locked for ~2s; send the unlock time so the client shows a charging cue.
+      if (c.collectableAt !== undefined) delta.collectableAt = c.collectableAt;
     }
     entities.push(delta);
     view.prevSent.set(c.id, { kind: "chunk", x: c.x, y: c.y });
@@ -173,6 +179,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
 
   const hits = hitEventsFor(world, self, seen);
   const zaps = zapsFor(world, self, seen);
+  const swallowed = swallowsFor(world, seen);
 
   return {
     t: "snapshot",
@@ -206,6 +213,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
     removed,
     ...(hits.length > 0 ? { hits } : {}),
     ...(zaps.length > 0 ? { zaps } : {}),
+    ...(swallowed.length > 0 ? { swallowed } : {}),
   };
 }
 
@@ -244,6 +252,20 @@ function zapsFor(world: World, self: Fish | null, seen: Set<number>): ZapEvent[]
     const byOwner = self !== null && ownerId === self.id;
     if (!byOwner && !z.nodes.some((n) => seen.has(n.id))) continue;
     out.push({ nodes: z.nodes, chain: z.chain, weaponId: z.weaponId, byOwner });
+  }
+  return out;
+}
+
+/**
+ * Per-socket swallow filter: include a swallow event when its eater is visible to this socket, so
+ * the client has the eater to tween the (about-to-be-removed) victim sprite into. The victim id
+ * also appears in `removed`; the client intercepts it and plays the suck-in animation instead.
+ */
+function swallowsFor(world: World, seen: Set<number>): Array<{ id: number; by: number }> {
+  if (world.swallowEvents.length === 0) return [];
+  const out: Array<{ id: number; by: number }> = [];
+  for (const e of world.swallowEvents) {
+    if (seen.has(e.by)) out.push({ id: e.id, by: e.by });
   }
   return out;
 }
@@ -289,6 +311,11 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     if (!prev) {
       delta.color = c.color;
       delta.mass = c.mass;
+      // XP balls (swallow ball + death-drop swarm) carry an XP payload (first-seen only); the
+      // client tints them gold + grants XP on pickup.
+      if (c.xp !== undefined) delta.xp = c.xp;
+      // The swallow ball is locked for ~2s; send the unlock time so the client shows a charging cue.
+      if (c.collectableAt !== undefined) delta.collectableAt = c.collectableAt;
     }
     entities.push(delta);
     view.prevSent.set(c.id, { kind: "chunk", x: c.x, y: c.y });
@@ -311,6 +338,7 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
 
   const hits = hitEventsFor(world, null, seen);
   const zaps = zapsFor(world, null, seen);
+  const swallowed = swallowsFor(world, seen);
 
   return {
     t: "snapshot",
@@ -323,5 +351,6 @@ export function buildSpectatorSnapshot(world: World, view: ClientView, now: numb
     removed,
     ...(hits.length > 0 ? { hits } : {}),
     ...(zaps.length > 0 ? { zaps } : {}),
+    ...(swallowed.length > 0 ? { swallowed } : {}),
   };
 }

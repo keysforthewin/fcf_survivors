@@ -1,5 +1,6 @@
 import type { LevelUpCard, LevelUpMsg } from "@fcf/shared";
 import type { NetSocket } from "../net/socket.ts";
+import { iconUrl, iconIdForCard } from "../render/icons.ts";
 
 const CARD_ACCENTS: Record<LevelUpCard["kind"], string> = {
   weapon: "#7fcfff",
@@ -129,9 +130,14 @@ export function mountLevelUp(net: NetSocket, msg: LevelUpMsg): LevelUpMount {
     el.className = `levelup-card kind-${card.kind}`;
     el.tabIndex = -1;
     el.style.setProperty("--card-accent", CARD_ACCENTS[card.kind]);
+    const iconId = iconIdForCard(card.id);
+    const iconHtml = iconId
+      ? `<div class="levelup-card-icon" style="background-image:url('${iconUrl(iconId)}')"></div>`
+      : "";
     // Action controls are <div role="button"> rather than <button> — nesting a
     // real button inside the card <button> is invalid HTML.
     el.innerHTML = `
+      ${iconHtml}
       <div class="levelup-card-kind">${CARD_KIND_LABEL[card.kind]}</div>
       <div class="levelup-card-title">${escapeHtml(card.title)}</div>
       <div class="levelup-card-desc">${escapeHtml(card.description)}</div>

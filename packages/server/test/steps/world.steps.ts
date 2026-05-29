@@ -70,6 +70,12 @@ export function addFish(sim: TestSim, seed: FishSeed): Fish {
       lastSampleAt: sim.clock.now(),
       stuckSince: null,
       blacklist: new Map(),
+      aggro: new Map(),
+      angeredTargetId: null,
+      chaseLastKnownX: 0,
+      chaseLastKnownY: 0,
+      chaseCommitUntil: 0,
+      aggroJitter: 0,
     };
     fish.aiState = aiState;
   }
@@ -141,6 +147,41 @@ Given(
   function (this: TestWorld, x: number, y: number, mass: number) {
     const sim = ensureSim(this);
     sim.world.spawnChunk(x, y, mass, "#ffdf80", sim.clock.now());
+  }
+);
+
+// Directly invoke the death-drop scatter (the real trigger lives in the server tick loop in
+// index.ts, which the world-only harness doesn't run — mirrors how "a chunk at" calls spawnChunk).
+Given(
+  "a fish dies from damage at \\({float}, {float}\\) with mass {float} and level {int}",
+  function (this: TestWorld, x: number, y: number, mass: number, level: number) {
+    const sim = ensureSim(this);
+    sim.world.spawnDeathDrops(x, y, mass, "#7fcfff", level, sim.clock.now());
+  }
+);
+
+// A single collectable XP ball (xp-bearing chunk). Velocity is zeroed so a fish placed on it
+// collects deterministically in one tick.
+Given(
+  "an XP ball at \\({float}, {float}\\) worth {int} xp",
+  function (this: TestWorld, x: number, y: number, xp: number) {
+    const sim = ensureSim(this);
+    const c = sim.world.spawnChunk(x, y, 10, "#ffe066", sim.clock.now(), xp);
+    c.vx = 0;
+    c.vy = 0;
+  }
+);
+
+// A swallow-style gold ball locked (uncollectable by anyone) until `ms` from now. Stationary so the
+// test can park a fish on it and observe the lock gate, then collection once it expires.
+Given(
+  "a locked XP ball at \\({float}, {float}\\) worth {int} xp, unlockable in {int} ms",
+  function (this: TestWorld, x: number, y: number, xp: number, ms: number) {
+    const sim = ensureSim(this);
+    const c = sim.world.spawnChunk(x, y, 60, "#ffe066", sim.clock.now(), xp);
+    c.vx = 0;
+    c.vy = 0;
+    c.collectableAt = sim.clock.now() + ms;
   }
 );
 
@@ -469,6 +510,15 @@ Then(
   function (this: TestWorld, expected: number) {
     const n = this.requireSim().world.chunks.size;
     assert.ok(n >= expected, `Expected ≥${expected} chunks, got ${n}`);
+  }
+);
+
+Then(
+  "the total burp XP in the world is {int}",
+  function (this: TestWorld, expected: number) {
+    let total = 0;
+    for (const c of this.requireSim().world.chunks.values()) total += c.xp ?? 0;
+    assert.equal(total, expected, `Expected total burp XP=${expected}, got ${total}`);
   }
 );
 

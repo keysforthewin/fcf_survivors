@@ -9,20 +9,21 @@ const FLIP_DEADBAND = 0.08;
 /**
  * A fish rendered as a photo-real sprite (public/fish/<id>.png, authored facing +x). The
  * sprite lives inside `bodyGroup`, which carries the velocity squash-stretch, the bite "gulp"
- * and the facing flip; `glow` (big fish) and the optional own-fish `ownRing` sit behind it, and
- * the name `label` rides on the outer container so it never inherits the flip/squash.
+ * and the facing flip; `glow` (big fish) sits behind it, and the name `label` rides on the outer
+ * container so it never inherits the flip/squash.
  */
 export class FishSprite {
   container = new Container();
   private bodyGroup = new Container();
   private sprite: Sprite;
   private glow = new Graphics();
-  /** Soft ring under the local player's own fish so they can find themselves (species != color now). */
-  private ownRing: Graphics | null = null;
   private label: Text;
+  /** The fish's name without any prefix; the rendered label may show "💀 " + this. */
+  private baseName: string;
+  /** Whether this fish can currently eat the local player (drives the 💀 nameplate prefix). */
+  private dangerous = false;
   private color: number;
   private isAi: boolean;
-  private isSelf: boolean;
   private species: string;
   private currentRadius = 0;
   private currentMass = 0;
@@ -37,25 +38,23 @@ export class FishSprite {
   private stretchY = 1;
   /** +1 facing right, -1 facing left (vertical mirror keeps the side profile belly-down). */
   private flipSign = 1;
-  /** Bite chomp animation: active while biteAge < BITE.animMs, advanced by dt in update(). */
+  /** Bite chomp animation: active while biteAge < the kind's envelope, advanced by dt in update(). */
   private biteActive = false;
   private biteAge = 0;
+  /** Which chomp to play: a big "eat" gulp+lurch when swallowing prey, or a quick "nibble" nip. */
+  private biteKind: "eat" | "nibble" = "eat";
   /** Whether the sprite is currently showing the tintable fallback silhouette (vs the real photo). */
   private usingFallback = true;
 
-  constructor(name: string, color: string, isAi: boolean, species: string, isSelf = false) {
+  constructor(name: string, color: string, isAi: boolean, species: string, _isSelf = false) {
     this.color = parseColor(color);
     this.isAi = isAi;
-    this.isSelf = isSelf;
     this.species = species;
+    this.baseName = name;
     this.sprite = new Sprite(getFishTexture(species));
     this.sprite.anchor.set(0.5);
     this.bodyGroup.addChild(this.sprite);
-    // Layer order (back → front): ownRing (self only), glow, [bodyGroup: sprite], label.
-    if (isSelf) {
-      this.ownRing = new Graphics();
-      this.container.addChild(this.ownRing);
-    }
+    // Layer order (back → front): glow, [bodyGroup: sprite], label.
     this.container.addChild(this.glow);
     this.container.addChild(this.bodyGroup);
     const style = new TextStyle({
@@ -149,24 +148,23 @@ export class FishSprite {
     const target = Math.max(0, Math.min(0.22, this.speed / 900));
     this.stretchX += (1 + target - this.stretchX) * ease;
     this.stretchY += (1 - target * 0.5 - this.stretchY) * ease;
-    // Bite chomp: a brief "gulp" (stretch forward, squash vertically) over BITE.animMs.
+    // Bite chomp: a brief "gulp" (stretch forward, squash vertically). A swallow ("eat") is a big,
+    // longer gulp; a "nibble" is a quick small nip.
     let gulp = 0;
     if (this.biteActive) {
       this.biteAge += dt;
-      const t = this.biteAge / (BITE.animMs / 1000);
+      const isEat = this.biteKind === "eat";
+      const dur = (isEat ? BITE.eatAnimMs : BITE.nibbleAnimMs) / 1000;
+      const amp = isEat ? BITE.eatGulp : BITE.nibbleGulp;
+      const t = this.biteAge / dur;
       if (t >= 1) this.biteActive = false;
-      else gulp = Math.sin(Math.PI * t) * BITE.gulp;
+      else gulp = Math.sin(Math.PI * t) * amp;
     }
     // Compose squash-stretch + gulp + facing-flip into the single bodyGroup scale.
     this.bodyGroup.scale.set(
       this.stretchX * (1 + gulp),
       this.stretchY * (1 - gulp * 0.5) * this.flipSign,
     );
-
-    // Own-fish ring: slow pulse so the player can always pick themselves out.
-    if (this.ownRing) {
-      this.ownRing.alpha = 0.5 + 0.18 * Math.sin(this.swimPhase * 0.5);
-    }
 
     this.label.position.set(0, -this.renderRadius - 14);
     this.label.rotation = -this.container.rotation;
@@ -191,7 +189,7 @@ export class FishSprite {
     this.sprite.tint = ready ? 0xffffff : this.color;
   }
 
-  /** Redraw the (cheap, change-gated) decorations: big-fish glow and the own-fish ring. */
+  /** Redraw the (cheap, change-gated) decoration: the big-fish glow. */
   private decorate(radius: number): void {
     this.currentRadius = radius;
 
@@ -203,14 +201,6 @@ export class FishSprite {
         .circle(0, 0, gr).fill({ color: lighter, alpha: 0.05 })
         .circle(0, 0, gr * 0.82).fill({ color: lighter, alpha: 0.08 });
     }
-
-    if (this.ownRing) {
-      this.ownRing.clear();
-      const rr = radius * 1.28;
-      this.ownRing
-        .circle(0, 0, rr).stroke({ color: this.color, width: Math.max(2, radius * 0.06), alpha: 0.85 })
-        .circle(0, 0, rr).fill({ color: this.color, alpha: 0.05 });
-    }
   }
 
   /** Counter-scale the name label so it never renders smaller than `minPx` on-screen. */
@@ -221,10 +211,31 @@ export class FishSprite {
   }
 
   setIdentity(name: string, color: string): void {
-    this.label.text = name;
+    this.baseName = name;
+    this.renderLabel();
     this.color = parseColor(color);
     this.decorate(this.currentRadius);
     this.refreshTexture();
+  }
+
+  /**
+   * Mark whether this fish can eat the local player. When true, a 💀 is prefixed to the
+   * nameplate so the player sees at a glance which neighbours are deadly. No-op if unchanged.
+   */
+  setDanger(dangerous: boolean): void {
+    if (dangerous === this.dangerous) return;
+    this.dangerous = dangerous;
+    this.renderLabel();
+  }
+
+  /** Compose the nameplate from the base name plus the danger prefix. */
+  private renderLabel(): void {
+    this.label.text = this.dangerous ? `💀 ${this.baseName}` : this.baseName;
+  }
+
+  /** The nameplate text currently shown, including any 💀 prefix. For tests/debug. */
+  getLabelText(): string {
+    return this.label.text;
   }
 
   /** Swap the fish to a different species; the texture re-binds on the next update/refresh. */
@@ -235,10 +246,11 @@ export class FishSprite {
     this.applySpriteScale();
   }
 
-  /** Start (or restart) the mouth-open chomp animation. Called when this fish bites edible prey. */
-  triggerBite(): void {
+  /** Start (or restart) the chomp animation. `eat` = big swallow gulp+lurch; `nibble` = quick nip. */
+  triggerBite(kind: "eat" | "nibble" = "eat"): void {
     this.biteActive = true;
     this.biteAge = 0;
+    this.biteKind = kind;
   }
 
   destroy(): void {

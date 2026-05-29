@@ -97,9 +97,49 @@ export const AI = {
   maxMass: 200,
 } as const;
 
+/**
+ * AI aggro: fish no longer chase edible prey on sight. A per-target aggro meter accumulates
+ * while an edible target loiters inside `radius` (rampPerSec) and from nibble damage taken
+ * (perDamage); once it crosses `commitThreshold + aggroJitter*jitterSpan` (per-fish jitter so a
+ * school doesn't commit in lockstep) the fish commits to an "angered" chase. An angered chase
+ * has a long leash (`leashRadius`, well past sightRadius) and a refreshed `commitMs` window so
+ * it's hard to shake. Aggro decays (`decayPerSec`) when the target isn't present; the chase
+ * drops when the meter falls below `dropThreshold` or the target is lost past leash. Flee is
+ * unaffected (predators are always fled immediately). Deterministic: no per-tick RNG.
+ */
+export const AGGRO = {
+  radius: 320,
+  rampPerSec: 1.0,
+  decayPerSec: 0.6,
+  commitThreshold: 1.0,
+  jitterSpan: 1.5,
+  dropThreshold: 0.3,
+  perDamage: 0.25,
+  /** Hard cap on a target's meter so a long engagement can't build an un-droppable grudge. */
+  maxMeter: 4,
+  leashRadius: 1200,
+  commitMs: 5000,
+  loseMemoryMs: 1500,
+} as const;
+
 export const VIEW = {
   baseRadius: 1500,
   perLogMass: 200,
+} as const;
+
+/**
+ * Feeding frenzy: a kill scatters gold XP balls (DEATH_XP_DROP / BURP). Any AI fish with a
+ * dropped XP ball within `radius` immediately abandons its wander/hunt and rushes the nearest
+ * one at `speed` — a screen-wide scramble for the free XP. Flee always wins: a bigger fish in
+ * AI.sightRadius scares the fish off first, so small fish don't suicide chasing food.
+ * `radius` ≈ VIEW.baseRadius so "a ball on your screen → rush it"; it deliberately reaches
+ * farther than AGGRO.leashRadius (1200) and AI.sightRadius (400) so the whole visible area
+ * converges. `speed` sits just above chaseSpeed (220) / steady fleeSpeed (240) — eager, but a
+ * panicking fish (fleePanicSpeed 380) still out-sprints it.
+ */
+export const FRENZY = {
+  radius: 1500,
+  speed: 260,
 } as const;
 
 export const MASS_DECAY = {
@@ -165,15 +205,94 @@ export const SPAWN = {
 export const BITE = {
   /** One-shot forward velocity bump (px/s) added along heading on a bite. Decays via ACCEL. */
   lungeImpulse: 240,
+  /** Stronger forward lurch when actually swallowing prey whole (vs a nibble). */
+  eatLungeImpulse: 380,
   /** Min time between lunges per attacker so sustained contact doesn't stack into a rocket. */
   cooldownMs: 320,
+  /**
+   * Damage (per attacker level) of a BITE — a fish chomping prey it is bigger than but cannot yet
+   * swallow (the "between zone": bigger but under the 1.15× ratio, or equal size). Light by design
+   * so swallowing whole (15% bigger → eat + 2× XP) stays the faster, more rewarding path; repeated
+   * bites just soften prey until the swallow ratio is crossed. Routed through the mass-loss model
+   * like a nibble. (Nibbling a BIGGER fish still uses NIBBLE.damagePerLevel.)
+   */
+  biteDamagePerLevel: 2,
   /** Extra px added to rA+rB for the client-side own-fish bite detector. */
   contactPad: 6,
   /** Mouth-open "gulp" deformation (fraction) applied to the sprite over the envelope. */
   gulp: 0.3,
   /** Bite animation envelope (ms). */
   animMs: 240,
+  /** Pronounced mouth-open "gulp" when swallowing prey whole — the comical chomp. */
+  eatGulp: 0.62,
+  /** Eat (swallow) animation envelope (ms) — a beat longer than a nibble so the chomp reads. */
+  eatAnimMs: 340,
+  /** Quick small nip deformation when nibbling a bigger fish. */
+  nibbleGulp: 0.22,
+  /** Nibble animation envelope (ms) — short and snappy. */
+  nibbleAnimMs: 150,
 } as const;
+
+/**
+ * Nibble: a smaller fish in contact with a bigger one takes a bite out of it for
+ * damage = attacker.level * damagePerLevel, routed through the mass-loss model. Gated
+ * by the same cooldown as the bite lunge so sustained contact can't machine-gun damage.
+ * Nibbling does NOT eat the bigger fish; sustained nibble damage feeds AI aggro (see AGGRO).
+ */
+export const NIBBLE = {
+  damagePerLevel: 1,
+  cooldownMs: BITE.cooldownMs,
+} as const;
+
+/**
+ * XP burp: when a fish swallows another whole, the kill's XP (xpDroppedOnDeath) is sprayed
+ * forward out of the eater's mouth as collectable chunks (carrying `xp`, no mass — the swallow
+ * already granted the eater the prey's mass). They're locked (uncollectable by anyone) for
+ * `lockMs` so others get a chance to swim in, and the forward speed is sized so a stationary eater's spray lands
+ * ~`landFraction` of a screen ahead (see spawnBurpChunk; travelPerSpeed = Σ 0.94^k · dt).
+ */
+export const BURP = {
+  /** Render size of a burp orb (`mass` on the wire — purely visual; pickup grants `xp`, not mass).
+   *  Big so the swallow reward reads as "a huge ball of XP". */
+  visualMass: 60,
+  lifetimeMs: 12_000,
+  /** The gold XP ball is uncollectable by ANYONE for this long after a swallow, then it's a
+   *  free-for-all — gives nearby players time to swim in and contest the eater's reward. */
+  lockMs: 2_000,
+  spreadRad: 0.5,
+  /** Burp as a SINGLE big orb (not a fan) — one chunk carries the whole (2×) XP payload. */
+  count: 1,
+  /** Multiplier on the swallowed fish's XP (xpDroppedOnDeath) — eating whole is worth 4× a
+   *  damage-kill, so swallowing is strictly better than chipping a fish to death. */
+  eatXpMult: 4,
+  /** Land the orb just ahead of the mouth so it's easy to scoop up (it's locked for lockMs first). */
+  landFraction: 0.25,
+  travelPerSpeed: 0.8333,
+} as const;
+
+/**
+ * When a fish dies from DAMAGE (weapons/nibble — not swallowed whole) it scatters a swarm of
+ * cheap gold XP balls where it fell, instead of handing the killer XP automatically. Anyone can
+ * collect them, so a kill turns into a contested PvP scrum. The dead fish's whole XP value
+ * (xpDroppedOnDeath) is split evenly across the balls — lots of them, each worth little.
+ */
+export const DEATH_XP_DROP = {
+  /** Render size of each scattered ball (visual only — pickup grants xp, not mass). Small so the
+   *  swarm reads as "lots of little pickups", distinct from the one big swallow ball. */
+  visualMass: 10,
+  /** Target XP per ball — the ball count is sized so each ball is worth roughly this. At 1 the
+   *  swarm is ~3× the balls it used to be (a big, impressive gold shower) for the same total XP. */
+  xpPerBall: 1,
+  minBalls: 18,
+  maxBalls: 120,
+  /** Death balls clear a little faster than the 15s corpse-chunk default to bound how many pile up. */
+  lifetimeMs: 12_000,
+} as const;
+
+/** Spatial-hash query pad covering the largest fish radius in play (~200 at mass 300). Used by
+ *  weapon AoE queries and the fish-eat/nibble neighbor query so a tiny fish next to a huge one
+ *  still registers contact (the eat query radius scales with the actor's own small radius). */
+export const MAX_FISH_RADIUS_PAD = 200;
 
 export function fishRadius(mass: number): number {
   return 2 * (Math.pow(Math.max(1, mass), 0.7) + 8);
@@ -185,6 +304,15 @@ export function viewRadius(mass: number): number {
 
 export function canEat(predatorMass: number, preyMass: number): boolean {
   return predatorMass >= preyMass * FISH.eatRatio;
+}
+
+/**
+ * Whether `predator` may swallow `prey` whole. Single source of truth for the fish-eat rule,
+ * kept separate from `canEat` (which AI prey/threat/separation logic uses) so the eat threshold
+ * can be tuned without rippling into AI decision-making. Currently the same 1.15× advantage.
+ */
+export function canSwallow(predatorMass: number, preyMass: number): boolean {
+  return canEat(predatorMass, preyMass);
 }
 
 export function massPenaltyT(mass: number): number {

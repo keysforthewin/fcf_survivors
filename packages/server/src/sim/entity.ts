@@ -76,11 +76,26 @@ export interface Fish {
   name: string;
   isAi: boolean;
   /**
-   * Server tick on which this fish last bit edible prey. The snapshot builder turns
+   * Server tick on which this fish last swallowed prey whole. The snapshot builder turns
    * `bitingTick === world.tick` into a transient `biting` flag so clients play the
-   * mouth-open chomp animation on the eater. Undefined until the first bite.
+   * mouth-open chomp/lurch animation on the eater. Undefined until the first eat.
    */
   bitingTick?: number;
+  /** Server tick on which this fish last took a quick BITE — either nibbling a bigger fish, or
+   *  biting prey it's bigger than but can't yet swallow → transient `nibbling` flag (quick nip anim). */
+  nibblingTick?: number;
+  /** Wall-time of this fish's last nibble (of a bigger fish); gates NIBBLE.cooldownMs. */
+  lastNibbleAt?: number;
+  /** Wall-time of this fish's last BITE (of prey it can't yet swallow); gates BITE.cooldownMs.
+   *  Separate from lastNibbleAt so a bite and a nibble of different neighbours don't stomp each
+   *  other's cooldown when a fish sits between a bigger and a smaller neighbour. */
+  lastBiteAt?: number;
+  /**
+   * Set true on the tick this fish was swallowed whole (as opposed to killed by a weapon or nibble).
+   * The death handler skips dropping corpse chunks for it — its XP is burped from the eater's mouth
+   * at eat time instead (see world.ts eat block). `undefined` ⇒ killed by weapon/nibble/void.
+   */
+  eatenWhole?: boolean;
   /**
    * Wall-time until which this fish cannot be eaten (spawn protection). 0/undefined = none.
    * Set on (re)spawn for players so any-contact eating doesn't instantly chomp a fresh fish.
@@ -144,7 +159,7 @@ export interface Fish {
 }
 
 export interface AiState {
-  mode: "wander" | "flee" | "chase";
+  mode: "wander" | "flee" | "chase" | "feed";
   modeUntil: number;
   wanderHeading: number;
   targetId: EntityId | null;
@@ -165,6 +180,27 @@ export interface AiState {
   fleeLastKnownY: number;
   /** Wall-time after which the fish forgets the last predator and stops biasing wander away from it. */
   fleeMemoryUntil: number;
+  /**
+   * Per-target aggro meter (entityId → accumulated aggro). Ramps while an edible target loiters
+   * in AGGRO.radius and from nibble damage taken; decays + pruned each tick. Lazy-init'd in
+   * updateAi so the cucumber harness (which builds AiState literals omitting these) stays safe.
+   */
+  aggro: Map<EntityId, number>;
+  /** Target this fish has committed to hunting (meter crossed threshold). null = not committed. */
+  angeredTargetId: EntityId | null;
+  /** Last-known position of the angered target while briefly out of sight (mirrors fleeLastKnown). */
+  chaseLastKnownX: number;
+  chaseLastKnownY: number;
+  /** Wall-time the angered-chase commitment expires (refreshed while the target is within leash). */
+  chaseCommitUntil: number;
+  /** Per-fish jitter [0,1) added to the aggro commit threshold so a school doesn't aggro in lockstep. */
+  aggroJitter: number;
+  /**
+   * Feeding frenzy (FRENZY): the dropped XP-ball chunk this fish is currently rushing, or null.
+   * A CHUNK id, NOT a fish id — kept separate from `targetId` (which flee/chase/hysteresis/
+   * stuck-blacklist all assume is a fish). Recomputed each tick to the nearest in-range ball.
+   */
+  feedTargetId: EntityId | null;
 }
 
 export interface Pellet {
@@ -194,6 +230,14 @@ export interface Chunk {
   mass: number;
   color: string;
   expiresAt: number;
+  /**
+   * Burp chunks only: XP granted on collection (instead of the corpse-chunk's mass-derived XP),
+   * and these grant no mass — the swallow already gave the eater the prey's mass. `mass` is then
+   * just the render size. `undefined` ⇒ a normal corpse chunk (mass + mass-derived XP).
+   */
+  xp?: number;
+  /** Burp chunks only: wall-time before which this chunk can't be collected (arming delay). */
+  collectableAt?: number;
 }
 
 export type ProjectileBehavior = "linear" | "orbital" | "static";

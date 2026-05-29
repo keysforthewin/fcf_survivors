@@ -16,9 +16,11 @@ Feature: Weapon damage
     And "Minnow" has mass approximately 24
 
   Scenario: A pulse weapon chips a bigger AI fish (chip damage preserved)
+    # Chunky sits well beyond body contact (no nibble) but inside the pulse's huge AoE, so this
+    # isolates the pulse chip from the new smaller-fish-nibbles-bigger-fish melee damage.
     Given a player "Apex" at (4000, 4000) with mass 70
     And "Apex" has weapon "pulse" at level 1
-    And an AI fish "Chunky" at (4060, 4000) with mass 80
+    And an AI fish "Chunky" at (4300, 4000) with mass 80
     When the world advances 1 tick
     Then "Chunky" is alive
     And "Chunky" has mass approximately 79

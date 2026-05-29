@@ -31,6 +31,12 @@ export const SPECIES: readonly SpeciesDef[] = [
   { id: "mahi-mahi", label: "Mahi-Mahi", accentColor: "#57c277" },
   { id: "reef-shark", label: "Reef Shark", accentColor: "#92a7b4" },
   { id: "swordfish", label: "Swordfish", accentColor: "#4358a8" },
+  { id: "blobfish", label: "Blobfish", accentColor: "#d98f8a" },
+  { id: "anglerfish", label: "Anglerfish", accentColor: "#5fd0ff" },
+  { id: "goblin-shark", label: "Goblin Shark", accentColor: "#e6a8b0" },
+  { id: "barreleye", label: "Barreleye", accentColor: "#46d6a0" },
+  { id: "leafy-sea-dragon", label: "Leafy Sea Dragon", accentColor: "#c8c24e" },
+  { id: "mantis-shrimp", label: "Mantis Shrimp", accentColor: "#19c98a" },
 ] as const;
 
 export const DEFAULT_SPECIES_ID = SPECIES[0]!.id;

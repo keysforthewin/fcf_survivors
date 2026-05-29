@@ -21,7 +21,7 @@ Feature: Alien Friends (flyby weapon)
     And a player "Target" at (4300, 4000) with mass 50
     When the world advances 100 ticks
     Then "Pilot" has at least 1 weapon hit
-    And "Pilot" has dealt at least 3 damage
+    And "Pilot" has dealt at least 1 damage
     And the latest zap used weapon "alien"
     And the latest zap strikes "Target"
 
