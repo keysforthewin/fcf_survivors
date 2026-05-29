@@ -238,7 +238,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     ],
   },
   gunship: {
-    id: "gunship", name: "Attack Helicopter", description: "Rust's patrol heli — dual miniguns, rapid fire, longer patrols.",
+    id: "gunship", name: "Sky King's Apache", description: "A Rust Apache gunship — dual miniguns, rapid fire, longer patrols.",
     kind: "heli", evolutionOf: "heli",
     levels: [
       // Dual-minigun: 2 bullets/burst with a slight spread; rapid 300ms cadence; 10s uptime, 16s cooldown.
