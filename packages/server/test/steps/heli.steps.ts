@@ -5,6 +5,7 @@ import type { WeaponId } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 import { getFish } from "../support/world-factory.ts";
 import type { World } from "../../src/sim/world.ts";
+import { getMoveSpeed, getEffectiveMoveSpeed } from "../../src/sim/passives.ts";
 
 /** Count in-flight heli BODY projectiles owned by a fish (excludes its bullets). */
 function heliBodyCount(world: World, ownerId: number): number {
@@ -23,3 +24,23 @@ Then(
     assert.equal(heliBodyCount(sim.world, f.id), expected, `expected ${expected} heli bodies`);
   },
 );
+
+Then("{string} is slowed", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = getFish(sim, name);
+  assert.ok((f.slowUntil ?? 0) > sim.clock.now(), `expected ${name} to be slowed`);
+});
+
+Then("{string} is not slowed", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = getFish(sim, name);
+  assert.ok((f.slowUntil ?? 0) <= sim.clock.now(), `expected ${name} not slowed`);
+});
+
+Then("{string} effective move speed is halved", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = getFish(sim, name);
+  const eff = getEffectiveMoveSpeed(f, sim.clock.now());
+  const base = getMoveSpeed(f);
+  assert.ok(Math.abs(eff - base * 0.5) < 1e-6, `expected halved speed, got ${eff} vs base ${base}`);
+});

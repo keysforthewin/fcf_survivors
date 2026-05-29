@@ -54,6 +54,7 @@ function projectileDelta(proj: Projectile, prev: unknown): EntityDelta {
     delta.weaponId = proj.weaponId;
     delta.ownerId = proj.ownerId;
     delta.radius = Math.round(proj.radius);
+    if (proj.isBody) delta.body = true;
   }
   // Orbital blades carry their angle each tick so the client can animate the orbit at its
   // own framerate (re-anchor to orbitAngle, extrapolate at orbitAngular). orbitRadius grows
@@ -202,6 +203,7 @@ export function buildSnapshot(world: World, self: Fish, view: ClientView, now: n
       nextLevelXp,
       boostReadyAt: self.boostReadyAt,
       boostUntil: self.boostUntil,
+      slowUntil: self.slowUntil ?? 0,
       serverNow: now,
       weapons,
       passives,

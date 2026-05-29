@@ -232,6 +232,8 @@ export interface SnapshotMsg {
     nextLevelXp: number;
     boostReadyAt: number;
     boostUntil: number;
+    /** Wall-time until which the player's own fish is slowed (Battle Comms). 0 = not slowed. The client applies the SLOW.mult itself in stepSelf. */
+    slowUntil: number;
     serverNow: number;
     weapons: YouWeaponSlot[];
     passives: YouPassiveSlot[];

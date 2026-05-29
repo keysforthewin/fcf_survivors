@@ -1,4 +1,4 @@
-import { WEAPONS, getWeaponLevel, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius } from "@fcf/shared";
+import { WEAPONS, getWeaponLevel, FISH, MAX_FISH_RADIUS_PAD, fishRadius, viewRadius, battleCommsSlowMs } from "@fcf/shared";
 import type { WeaponLevel, WeaponId } from "@fcf/shared";
 import type { Fish, Projectile, WeaponSlot, OrbitalState, TrailState, BurstSweepState, FlybyState, HeliState } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -40,7 +40,7 @@ function withinOwnerView(owner: Fish, x: number, y: number, viewR2: number): boo
  * kills (ESP/aliens) correctly instead of the 250-unit proximity guess. Records a
  * hit event for client-side feedback.
  */
-function applyHit(world: World, target: Fish, owner: Fish, damage: number, weaponId: WeaponId): void {
+function applyHit(world: World, target: Fish, owner: Fish, damage: number, weaponId: WeaponId, now: number): void {
   // Full Metal subtracts a flat amount from incoming damage (floored at MIN_HIT_DAMAGE so armor
   // never fully nullifies a weapon). The post-armor value is what's drained, credited, and shown —
   // so the floating damage number reflects what the target actually took.
@@ -73,6 +73,13 @@ function applyHit(world: World, target: Fish, owner: Fish, damage: number, weapo
       // same as everyone else, so a kill becomes a contested scrum instead of a free reward.
       owner.kills += 1;
     }
+  }
+
+  // Battle Comms: any fish a player damages is slowed to half speed for a level-scaled window.
+  // AI never carry passives, so this is a no-op for AI owners. The owner is the attacker, never slowed.
+  if (!owner.isAi) {
+    const dur = battleCommsSlowMs(owner.passives.get("comms") ?? 0);
+    if (dur > 0) target.slowUntil = Math.max(target.slowUntil ?? 0, now + dur);
   }
 }
 
@@ -146,7 +153,7 @@ export function tryFireWeapons(world: World, fish: Fish, now: number): void {
       }
       case "radial-pulse":
         if (now >= slot.cooldownReadyAt) {
-          firePulse(world, fish, slot, lvl, dmg, def.chain ?? false);
+          firePulse(world, fish, slot, lvl, dmg, def.chain ?? false, now);
           slot.cooldownReadyAt = now + lvl.cooldownMs * cdMult;
         }
         break;
@@ -263,9 +270,9 @@ function tickBurstSweep(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponL
   return state.firedCount >= count;
 }
 
-function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, chain: boolean): void {
+function firePulse(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel, damage: number, chain: boolean, now: number): void {
   const radius = lvl.pulseRadius ?? lvl.range;
-  pulseAt(world, fish.id, fish, fish.x, fish.y, radius, damage, slot.id, chain, lvl.maxTargets);
+  pulseAt(world, fish.id, fish, fish.x, fish.y, radius, damage, slot.id, now, chain, lvl.maxTargets);
 }
 
 /**
@@ -283,6 +290,7 @@ function pulseAt(
   radius: number,
   damage: number,
   weaponId: WeaponId,
+  now: number,
   chain = false,
   maxTargets?: number,
 ): void {
@@ -308,7 +316,7 @@ function pulseAt(
   }
   const struck: { id: number; x: number; y: number }[] = [];
   for (const { target } of candidates) {
-    applyHit(world, target, owner, damage, weaponId);
+    applyHit(world, target, owner, damage, weaponId, now);
     struck.push({ id: target.id, x: target.x, y: target.y });
   }
 
@@ -509,7 +517,7 @@ function tickFlyby(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel,
     if (!proj) continue;
     if (now - ship.lastFireAt < interval) continue;
     ship.lastFireAt = now;
-    fireLaser(world, fish, proj, viewR, damage, slot.id);
+    fireLaser(world, fish, proj, viewR, damage, slot.id, now);
   }
 }
 
@@ -519,7 +527,7 @@ function tickFlyby(world: World, fish: Fish, slot: WeaponSlot, lvl: WeaponLevel,
  * zap so the client draws a beam from the UFO to it. Fires silently when the
  * player has nothing visible to shoot.
  */
-function fireLaser(world: World, owner: Fish, ship: Projectile, viewR: number, damage: number, weaponId: WeaponId): void {
+function fireLaser(world: World, owner: Fish, ship: Projectile, viewR: number, damage: number, weaponId: WeaponId, now: number): void {
   const scratch: Fish[] = [];
   // Candidates = everything on the owner's screen.
   world.fishHash.query(owner.x, owner.y, viewR + MAX_FISH_RADIUS_PAD, scratch);
@@ -538,7 +546,7 @@ function fireLaser(world: World, owner: Fish, ship: Projectile, viewR: number, d
     }
   }
   if (!best) return;
-  applyHit(world, best, owner, damage, weaponId);
+  applyHit(world, best, owner, damage, weaponId, now);
   world.zapEvents.push({
     nodes: [
       { id: ship.id, x: Math.round(ship.x), y: Math.round(ship.y) },
@@ -760,7 +768,7 @@ export function applyProjectileDamage(world: World, now: number): void {
         if (now - lastHit < proj.reHitMs) continue;
       }
       proj.hits.set(target.id, now);
-      applyHit(world, target, owner, proj.damage, proj.weaponId);
+      applyHit(world, target, owner, proj.damage, proj.weaponId, now);
 
       if (proj.behavior === "linear") {
         // expire after first hit
@@ -802,7 +810,7 @@ export function applyClientWeaponHit(
     return false; // single-hit projectile already spent on this target
   }
   proj.hits.set(target.id, now);
-  applyHit(world, target, owner, proj.damage, proj.weaponId);
+  applyHit(world, target, owner, proj.damage, proj.weaponId, now);
   if (proj.behavior === "linear") proj.expiresAt = now; // single-hit bullets expire on contact
   return true;
 }

@@ -1,4 +1,4 @@
-import { FISH, PASSIVES, massSpeedMult, stackedMult } from "@fcf/shared";
+import { FISH, PASSIVES, SLOW, massSpeedMult, stackedMult } from "@fcf/shared";
 import type { PassiveId } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 
@@ -17,6 +17,12 @@ function flatEffect(fish: Fish, id: PassiveId): number {
 
 export function getMoveSpeed(fish: Fish): number {
   return FISH.baseSpeed * effectMult(fish, "fin") * massSpeedMult(fish.mass);
+}
+
+/** getMoveSpeed with the Battle Comms slow applied when active. Server movement uses this. */
+export function getEffectiveMoveSpeed(fish: Fish, now: number): number {
+  const base = getMoveSpeed(fish);
+  return (fish.slowUntil ?? 0) > now ? base * SLOW.mult : base;
 }
 
 export function getBoostCooldown(fish: Fish): number {

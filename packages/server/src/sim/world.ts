@@ -4,7 +4,7 @@ import type { Fish, Pellet, Fruit, Chunk, Projectile, ProjectileBehavior, HitEve
 import { SpatialHash } from "./spatial.ts";
 import { addAggro, maintainAiPopulation, pickAiName, updateAi } from "./ai.ts";
 import { tryFireWeapons, applyProjectileDamage, applyNibble } from "./weapon.ts";
-import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass, getEatRangeMult } from "./passives.ts";
+import { getMoveSpeed, getBoostCooldown, getPickupRadius, getPelletXp, getFishEatMass, getEatRangeMult, getEffectiveMoveSpeed } from "./passives.ts";
 
 const MAX_PROJECTILES = 400;
 
@@ -470,7 +470,7 @@ export class World {
         if (f.clientAuthoritative) continue;
         // Player movement (velocity smoothing + integrate + arena clamp) lives in
         // @fcf/shared so the client predictor runs identical physics. See movement.ts.
-        stepFishMovement(f, f.targetVx, f.targetVy, getMoveSpeed(f), f.boost ? FISH.boostMultiplier : 1, f.mass, dtSec);
+        stepFishMovement(f, f.targetVx, f.targetVy, getEffectiveMoveSpeed(f, now), f.boost ? FISH.boostMultiplier : 1, f.mass, dtSec);
       } else {
         f.x += f.vx * dtSec;
         f.y += f.vy * dtSec;
