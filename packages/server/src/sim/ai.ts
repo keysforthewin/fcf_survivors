@@ -1,4 +1,4 @@
-import { AGGRO, AI, ARENA, FRENZY, SLOW, SPECIES, canEat, massSpeedMult } from "@fcf/shared";
+import { AGGRO, AI, ARENA, FRENZY, SLOW, SPECIES, aiAggroRamp, aiHuntRadius, aiLeashRadius, canEat, massSpeedMult } from "@fcf/shared";
 import type { EntityId } from "@fcf/shared";
 import type { AiState, Chunk, Fish } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -165,6 +165,12 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   const state = fish.aiState;
   const rng = world.rng;
   const sightR2 = AI.sightRadius * AI.sightRadius;
+  // Hunting (prey detection, aggro ramp, leash, ramp rate) scales with this fish's mass so bigger
+  // fish are more aggressive — sensing, locking onto, and chasing prey from farther. Threat/flee
+  // detection stays on the fixed sightR2 (we want more aggression, not more skittishness).
+  const huntR2 = aiHuntRadius(fish.mass) ** 2;
+  const leash2 = aiLeashRadius(fish.mass) ** 2;
+  const ramp = aiAggroRamp(fish.mass);
 
   // Lazy-init aggro fields: the cucumber harness builds AiState literals that omit them (tests are
   // not typechecked), so default them here rather than assume spawnAiFish ran.
@@ -284,11 +290,14 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
       const dx = t.x - fish.x;
       const dy = t.y - fish.y;
       const d2 = dx * dx + dy * dy;
-      if (d2 <= sightR2) {
-        if (t.mass >= fish.mass * AI.threatRatio) {
+      // Threats gate on the fixed sight radius; prey on the (mass-scaled) hunt radius.
+      if (t.mass >= fish.mass * AI.threatRatio) {
+        if (d2 <= sightR2) {
           currentPredator = t;
           currentPredatorD2 = d2;
-        } else if (canEat(fish.mass, t.mass)) {
+        }
+      } else if (canEat(fish.mass, t.mass)) {
+        if (d2 <= huntR2) {
           currentPrey = t;
           currentPreyD2 = d2;
         }
@@ -301,19 +310,24 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   let predatorDist = Infinity;
   let preyDist = Infinity;
 
+  // Cull on the wider of the two radii (for small fish huntR2 < sightR2, so we must NOT shrink the
+  // threat cull), then gate threats at sightR2 and prey at the mass-scaled huntR2.
+  const cullR2 = Math.max(sightR2, huntR2);
   for (const other of world.fish.values()) {
     if (other.id === fish.id || !other.alive) continue;
     if (state.blacklist.has(other.id)) continue;
     const dx = other.x - fish.x;
     const dy = other.y - fish.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 > sightR2) continue;
+    if (d2 > cullR2) continue;
     if (other.mass >= fish.mass * AI.threatRatio) {
+      if (d2 > sightR2) continue;
       if (d2 < predatorDist) {
         predatorDist = d2;
         nearestPredator = other;
       }
     } else if (canEat(fish.mass, other.mass)) {
+      if (d2 > huntR2) continue;
       if (d2 < preyDist) {
         preyDist = d2;
         nearestPrey = other;
@@ -337,9 +351,10 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   }
 
   // --- Aggro meters (deterministic, no RNG) ---
-  // The nearest edible prey loitering inside AGGRO.radius ramps its meter; every other entry
-  // decays and is pruned. Nibble damage adds to meters out-of-band via addAggro() (world.ts).
-  const aggroR2 = AGGRO.radius * AGGRO.radius;
+  // The nearest edible prey loitering inside the (mass-scaled) hunt radius ramps its meter at the
+  // mass-scaled rate; every other entry decays and is pruned. Nibble damage adds to meters
+  // out-of-band via addAggro() (world.ts).
+  const aggroR2 = huntR2;
   let rampId: EntityId | null = null;
   if (chosenPrey) {
     const pdx = chosenPrey.x - fish.x;
@@ -354,7 +369,7 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
     else state.aggro.set(id, nv);
   }
   if (rampId !== null) {
-    state.aggro.set(rampId, Math.min(AGGRO.maxMeter, (state.aggro.get(rampId) ?? 0) + AGGRO.rampPerSec * dt));
+    state.aggro.set(rampId, Math.min(AGGRO.maxMeter, (state.aggro.get(rampId) ?? 0) + ramp * dt));
   }
 
   // Feeding frenzy: nearest dropped XP ball within screen range (FRENZY). Computed before the mode
@@ -414,12 +429,11 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
   } else {
     // --- Angered chase (replaces immediate prey-on-sight chase) ---
     // Fish no longer chase prey the instant it's in range. A target chases only once its aggro
-    // meter (built by loitering in AGGRO.radius and/or nibble damage) crosses the per-fish
-    // commit threshold; then it pursues out to AGGRO.leashRadius (well past sight) with a
+    // meter (built by loitering in the hunt radius and/or nibble damage) crosses the per-fish
+    // commit threshold; then it pursues out to the (mass-scaled) leash, well past sight, with a
     // last-known grace, so it's much harder to shake. Drops when the meter decays out or the
     // target is lost past the leash.
     const commitLevel = AGGRO.commitThreshold + state.aggroJitter * AGGRO.jitterSpan;
-    const leash2 = AGGRO.leashRadius * AGGRO.leashRadius;
 
     // Drop a stale commitment (target gone or cooled off below dropThreshold).
     if (state.angeredTargetId !== null) {
@@ -468,7 +482,7 @@ export function updateAi(fish: Fish, world: World, now: number, dt: number): voi
           speed = AI.chaseSpeed;
           // Keep the meter hot while actively engaging up close (if not already the ramp target).
           if (d2 <= aggroR2 && rampId !== t.id) {
-            state.aggro.set(t.id, Math.min(AGGRO.maxMeter, (state.aggro.get(t.id) ?? 0) + AGGRO.rampPerSec * dt));
+            state.aggro.set(t.id, Math.min(AGGRO.maxMeter, (state.aggro.get(t.id) ?? 0) + ramp * dt));
           }
         } else if (now < state.chaseCommitUntil) {
           // Slipped past the leash but still within the grace window — pursue last-known.

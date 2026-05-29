@@ -95,6 +95,23 @@ export const AI = {
   /** Hard cap on AI mass. AI fish never shrink (exempt from decay), so without
    * this they'd grow without bound — keep them modest relative to players. */
   maxMass: 200,
+  /** Prey-detection + aggro-ramp radius grows this many units per mass above startMassMax — bigger
+   * fish sense prey from farther, so the player must be evasive around large AI. (Threat/flee
+   * detection stays at the fixed sightRadius — this only makes hunting more aggressive.) */
+  huntRadiusPerMass: 6.75,
+  /** Cap on the scaled hunt radius. Sits below leashRadiusMax so a fish never detects prey it
+   * can't pursue (≈ aiHuntRadius(maxMass)). */
+  huntRadiusMax: 1500,
+  /** Chase leash grows this many units per mass above startMassMax so a big fish can actually
+   * pursue the prey it now detects out past its hunt radius (and is harder to shake). */
+  leashRadiusPerMass: 4.5,
+  /** Cap on the scaled leash. Kept above huntRadiusMax so any detected prey is commit-eligible. */
+  leashRadiusMax: 2000,
+  /** Aggro ramp/sec grows this much per mass above startMassMax — big fish lock on in fewer ticks
+   * of loiter (~7 ticks at maxMass vs ~20 at the floor). */
+  aggroRampPerMass: 0.0115,
+  /** Cap on the scaled aggro ramp/sec. */
+  aggroRampMax: 3.0,
 } as const;
 
 /**
@@ -106,6 +123,10 @@ export const AI = {
  * it's hard to shake. Aggro decays (`decayPerSec`) when the target isn't present; the chase
  * drops when the meter falls below `dropThreshold` or the target is lost past leash. Flee is
  * unaffected (predators are always fled immediately). Deterministic: no per-tick RNG.
+ *
+ * NOTE: `radius`, `rampPerSec`, and `leashRadius` are the *small-fish floors* of the mass-scaled
+ * `aiHuntRadius` / `aiAggroRamp` / `aiLeashRadius` helpers — bigger AI fish detect, lock onto, and
+ * chase prey from progressively farther (see those helpers + AI.hunt/leash/aggroRamp* constants).
  */
 export const AGGRO = {
   radius: 320,
@@ -300,6 +321,38 @@ export function fishRadius(mass: number): number {
 
 export function viewRadius(mass: number): number {
   return VIEW.baseRadius + VIEW.perLogMass * Math.log(Math.max(1, mass));
+}
+
+/**
+ * AI prey-detection + aggro-ramp radius. Scales linearly with the hunter's mass: a fish at or
+ * below AI.startMassMax keeps the AGGRO.radius floor, the largest (AI.maxMass) reaches
+ * AI.huntRadiusMax. Threat/flee detection deliberately stays at the fixed AI.sightRadius — this
+ * only lets big fish hunt from farther, not flee more readily.
+ */
+export function aiHuntRadius(mass: number): number {
+  return Math.min(
+    AI.huntRadiusMax,
+    AGGRO.radius + AI.huntRadiusPerMass * Math.max(0, mass - AI.startMassMax),
+  );
+}
+
+/** AI chase leash, scaling with mass so a big fish can pursue the prey it detects out past its
+ *  hunt radius. Floors at AGGRO.leashRadius; always exceeds aiHuntRadius so detected prey is
+ *  commit-eligible. */
+export function aiLeashRadius(mass: number): number {
+  return Math.min(
+    AI.leashRadiusMax,
+    AGGRO.leashRadius + AI.leashRadiusPerMass * Math.max(0, mass - AI.startMassMax),
+  );
+}
+
+/** AI aggro ramp-per-second, scaling with mass so big fish commit to a chase in fewer ticks of
+ *  loiter. Floors at AGGRO.rampPerSec. */
+export function aiAggroRamp(mass: number): number {
+  return Math.min(
+    AI.aggroRampMax,
+    AGGRO.rampPerSec + AI.aggroRampPerMass * Math.max(0, mass - AI.startMassMax),
+  );
 }
 
 export function canEat(predatorMass: number, preyMass: number): boolean {

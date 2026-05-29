@@ -36,6 +36,46 @@ Feature: AI fish behaviour
     Then "Hunter" is in "chase" mode
     And "Hunter" has moved at least 100 units
 
+  # --- Larger AI fish are more aggressive: detection radius, lock-on speed, and chase leash all
+  # scale with the hunter's mass. Small fish keep the old fixed-radius behaviour. ---
+
+  Scenario: A large AI hunts prey from far outside a small fish's sight range
+    # aiHuntRadius scales with mass: a mass-200 AI detects + commits to prey at 800 units, well
+    # past the fixed 400 sight a small fish has.
+    Given an AI fish "Leviathan" at (4000, 4000) with mass 200 in "wander" mode
+    And a player "Snack" at (4800, 4000) with mass 10
+    When "Leviathan" is held at (4000, 4000) for 10 ticks
+    Then "Leviathan" is in "chase" mode
+    And "Leviathan" has target "Snack"
+
+  Scenario: A small AI ignores prey at that same range (scaling, not a blanket increase)
+    Given an AI fish "Minnow" at (4000, 4000) with mass 30 in "wander" mode
+    And a player "Snack" at (4800, 4000) with mass 10
+    When "Minnow" is held at (4000, 4000) for 10 ticks
+    Then "Minnow" is in "wander" mode
+
+  Scenario: A large AI locks on faster than a small fish would
+    # Faster lock-on: at mass 200 the aggro ramp is ~3/s, so a loitering target commits within ~7
+    # ticks (within the old 320 aggro radius, so detection isn't the variable — ramp speed is) — vs
+    # ~20 ticks on the old fixed 1/s ramp. Snack sits 250 units to the SIDE (perpendicular to the
+    # fish's default +x facing) so the front mouth-suction can't vacuum it in before the assertion.
+    Given an AI fish "Leviathan" at (4000, 4000) with mass 200 in "wander" mode
+    And a player "Snack" at (4000, 4250) with mass 10
+    When "Leviathan" is held at (4000, 4000) for 10 ticks
+    Then "Leviathan" is in "chase" mode
+
+  Scenario: A large angered AI pursues prey past the old leash distance
+    # Leash scales with mass (≈2000 at the cap). A mass-200 fish chases prey 1400 units away — past
+    # the old fixed 1200 leash — steering straight at it rather than giving up.
+    Given an AI fish "Leviathan" at (4000, 4000) with mass 200 in "wander" mode
+    And a player "Runner" at (5400, 4000) with mass 10
+    And "Leviathan" is angered at "Runner"
+    And baseline position of "Leviathan"
+    When the world advances 20 ticks
+    Then "Leviathan" is in "chase" mode
+    And "Leviathan" is steering toward (5400, 4000)
+    And "Leviathan" has moved at least 100 units
+
   Scenario: An AI ignores fish outside its sight radius
     Given an AI fish "Bob" at (4000, 4000) with mass 10 in "wander" mode
     And a player "Apex" at (6000, 4000) with mass 100
