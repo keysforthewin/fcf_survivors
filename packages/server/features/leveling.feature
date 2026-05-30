@@ -51,7 +51,7 @@ Feature: XP and level progression
     And "Alpha" sends input (1, 0)
     And the world advances 1 seconds
     Then "Alpha" has a pending level-up modal
-    And the speed of "Alpha" is approximately 640
+    And the speed of "Alpha" is approximately 556
 
   Scenario: Movement stays live after dismissing and restoring the modal
     # Dismiss/restore only toggles modal visibility now — it never freezes movement.
@@ -62,7 +62,7 @@ Feature: XP and level progression
     And "Alpha" restores the level-up modal
     And "Alpha" sends input (1, 0)
     And the world advances 1 seconds
-    Then the speed of "Alpha" is approximately 640
+    Then the speed of "Alpha" is approximately 556
     And "Alpha" has a pending level-up modal
 
   Scenario: Weapons keep firing while the level-up modal is open

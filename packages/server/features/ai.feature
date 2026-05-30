@@ -155,28 +155,28 @@ Feature: AI fish behaviour
     Then "Sprinter" has moved at least 150 units
 
   # AI fish never shrink (they're exempt from mass decay), so an uncapped AI
-  # would grow without bound. AI.maxMass caps them at 200 across every way a
-  # fish gains mass: pellets, chunks, and eating other fish.
+  # would grow without bound. AI.maxMass caps them at 300 (same ceiling as
+  # players) across every way a fish gains mass: pellets, chunks, eating fish.
 
   Scenario: Eating a fish cannot push an AI past the mass cap
     # Snack sits just in front of Shark (which faces +x by default) so the front-of-face eat fires.
-    Given an AI fish "Shark" at (1000, 1000) with mass 199 in "wander" mode
+    Given an AI fish "Shark" at (1000, 1000) with mass 299 in "wander" mode
     And a player "Snack" at (1040, 1000) with mass 100
     When the world advances 2 ticks
     Then "Snack" is dead
-    And "Shark" has mass 200
+    And "Shark" has mass 300
 
   Scenario: Gorging on a pellet cannot push an AI past the mass cap
-    Given an AI fish "Glutton" at (1000, 1000) with mass 200 in "wander" mode
+    Given an AI fish "Glutton" at (1000, 1000) with mass 300 in "wander" mode
     And a pellet at (1005, 1000)
     When the world advances 1 tick
-    Then "Glutton" has mass 200
+    Then "Glutton" has mass 300
 
   Scenario: Eating a chunk cannot push an AI past the mass cap
-    Given an AI fish "Muncher" at (1000, 1000) with mass 195 in "wander" mode
+    Given an AI fish "Muncher" at (1000, 1000) with mass 295 in "wander" mode
     And a chunk at (1003, 1000) with mass 50
     When the world advances 1 tick
-    Then "Muncher" has mass 200
+    Then "Muncher" has mass 300
 
   Scenario: An AI below the cap still grows normally from eating
     Given an AI fish "Grower" at (1000, 1000) with mass 50 in "wander" mode

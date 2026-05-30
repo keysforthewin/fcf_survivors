@@ -15,7 +15,7 @@ export const FISH = {
   boostDurationMs: 1500,
   boostCooldownMs: 15_000,
   radiusK: 1.6,
-  eatRatio: 1.15,
+  eatRatio: 1.25,
   massTaxOnEat: 0.2,
   /** Mass lost per damage point. Weapons drain mass directly — HP no longer exists. */
   damageMassLossRatio: 0.8,
@@ -90,14 +90,14 @@ export const AI = {
    *  fish, so AI of any size flees them like a lethal predator regardless of relative mass. */
   carAvoidRadius: 750,
   /**
-   * Mass ratio at which a nearby fish counts as a threat. Lower than FISH.eatRatio (1.15)
+   * Mass ratio at which a nearby fish counts as a threat. Lower than FISH.eatRatio (1.25)
    * so the AI starts running before the other fish is technically eat-eligible — eliminates
    * the "AI loiters next to a slightly-bigger player" stuck pattern.
    */
   threatRatio: 0.95,
-  /** Hard cap on AI mass. AI fish never shrink (exempt from decay), so without
-   * this they'd grow without bound — keep them modest relative to players. */
-  maxMass: 200,
+  /** Hard cap on AI mass — same 300 ceiling as players (massCapFor). AI fish never shrink
+   * (exempt from decay), so they trend toward this cap over time. */
+  maxMass: 300,
   /** Prey-detection + aggro-ramp radius grows this many units per mass above startMassMax — bigger
    * fish sense prey from farther, so the player must be evasive around large AI. (Threat/flee
    * detection stays at the fixed sightRadius — this only makes hunting more aggressive.) */
@@ -167,8 +167,9 @@ export const FRENZY = {
 } as const;
 
 export const MASS_DECAY = {
-  /** Hard cap on player mass — eating cannot push past this. */
-  maxMass: 5000,
+  /** Hard cap on player mass — eating cannot push past this. XP/levels keep growing past it;
+   *  only physical size is capped. AI share the same ceiling (AI.maxMass). */
+  maxMass: 300,
 } as const;
 
 /** Hard mass cap for a fish — eating cannot push it past this. AI fish stop at
@@ -180,18 +181,36 @@ export function massCapFor(isAi: boolean): number {
 export const SPEED_PENALTY = {
   /** Mass at which the speed multiplier equals 1.0 — neutral point. */
   refMass: 100,
-  /** Power-law exponent: mult = (refMass / mass) ^ speedExp. Higher = sharper falloff. */
-  speedExp: 0.40,
-  /** Cap for tiny fish — without this a mass-10 fish would reach 2.51x baseSpeed. */
-  maxMult: 2.0,
-  /** Floor for whales. */
+  /** Power-law exponent: mult = (refMass / mass) ^ speedExp. Higher = sharper falloff. Tuned
+   *  for the 10–300 mass world: a gentle 0.24 keeps a clear slowdown (mass-300 cap ≈ 0.77×,
+   *  ~246 px/s) without the harsh early drop the old 0.40 (5000-mass era) gave. */
+  speedExp: 0.24,
+  /** Cap for tiny fish — keeps the tiniest (AI mass ~5) from over-speeding. */
+  maxMult: 1.8,
+  /** Floor (not reached inside the 300 cap; mass-300 sits at ~0.77×). */
   minMult: 0.10,
   // Boost-duration shrink — uses a separate t-curve (massPenaltyT) anchored to these.
+  // fullPenaltyAtMass tracks the mass cap (300) so the shrink spans the whole real range:
+  // a maxed fish boosts for ~375ms vs the 1500ms a small fish gets.
   startAtMass: 100,
-  fullPenaltyAtMass: 2500,
+  fullPenaltyAtMass: 300,
   curveExp: 2.0,
   boostShrink: 0.75,
   boostMinMs: 350,
+} as const;
+
+/**
+ * Boost cooldown scales with mass: light fish dash often, heavy fish rarely, so growing
+ * costs mobility. Piecewise-linear through three anchors — see boostCooldownForMass. The
+ * Recovery passive still multiplies on top of this (getBoostCooldown).
+ */
+export const BOOST_COOLDOWN = {
+  lightMs: 4_000,                 // at/below lightMass — small fish dash often
+  midMs: FISH.boostCooldownMs,    // 15_000 — neutral value at midMass
+  heavyMs: 45_000,                // at/above heavyMass (the mass cap)
+  lightMass: FISH.startMass,      // 10
+  midMass: 100,
+  heavyMass: 300,                 // = the mass cap (MASS_DECAY.maxMass / AI.maxMass)
 } as const;
 
 export const MOUTH = {
@@ -392,6 +411,21 @@ export function boostDurationMs(mass: number): number {
   const t = massPenaltyT(mass);
   const shrink = Math.pow(t, SPEED_PENALTY.curveExp) * SPEED_PENALTY.boostShrink;
   return Math.max(SPEED_PENALTY.boostMinMs, FISH.boostDurationMs * (1 - shrink));
+}
+
+/**
+ * Boost cooldown (ms) as a function of mass. Piecewise-linear: lightMs at/below lightMass,
+ * rising to midMs at midMass, then to heavyMs at/above heavyMass. The Recovery passive
+ * multiplies the result (see getBoostCooldown).
+ */
+export function boostCooldownForMass(mass: number): number {
+  const { lightMs, midMs, heavyMs, lightMass, midMass, heavyMass } = BOOST_COOLDOWN;
+  if (mass <= lightMass) return lightMs;
+  if (mass <= midMass) {
+    return lightMs + (midMs - lightMs) * (mass - lightMass) / (midMass - lightMass);
+  }
+  const t = Math.min(1, (mass - midMass) / (heavyMass - midMass));
+  return midMs + (heavyMs - midMs) * t;
 }
 
 /**

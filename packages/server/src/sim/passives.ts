@@ -1,4 +1,4 @@
-import { FISH, PASSIVES, SLOW, MAX_FISH_RADIUS_PAD, massSpeedMult, stackedMult, eatRangeMultForStack, sybexRadius, sybexSlowMult } from "@fcf/shared";
+import { FISH, PASSIVES, SLOW, MAX_FISH_RADIUS_PAD, massSpeedMult, boostCooldownForMass, stackedMult, eatRangeMultForStack, sybexRadius, sybexSlowMult } from "@fcf/shared";
 import type { PassiveId } from "@fcf/shared";
 import type { Fish } from "./entity.ts";
 import type { World } from "./world.ts";
@@ -58,12 +58,13 @@ export function applySybexAuras(world: World): void {
 }
 
 export function getBoostCooldown(fish: Fish): number {
-  // Recovery is additive (unlike the other passives' multiplicative stacking):
-  // each stack subtracts 20 percentage points off base cooldown, so maxStack=4
-  // bottoms out at 20% of base. Floored at 5% so future maxStack bumps stay sane.
+  // Base cooldown scales with mass (boostCooldownForMass): light fish dash often, heavy
+  // fish rarely. Recovery then multiplies that, additively: each stack subtracts 20
+  // percentage points, so maxStack=4 bottoms out at 20%. Floored at 5% so future maxStack
+  // bumps stay sane.
   const stacks = fish.passives.get("recovery") ?? 0;
   const mult = Math.max(0.05, 1 - 0.20 * stacks);
-  return FISH.boostCooldownMs * mult;
+  return boostCooldownForMass(fish.mass) * mult;
 }
 
 /** Flat damage subtracted from each incoming hit (Full Metal, −1/stack). Positive number. */

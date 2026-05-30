@@ -1,8 +1,10 @@
 Feature: Mass-based balancing
-  Small fish are exponentially faster than large fish: an inverse power-law
-  curve (refMass=100, exp=0.40) anchored so a mass-100 fish runs at base speed
-  (320). Tiny fish are capped at 2x base; whales floor at 10%. Boost duration
-  also shrinks with mass.
+  Small fish are faster than large fish: an inverse power-law curve
+  (refMass=100, exp=0.24) anchored so a mass-100 fish runs at base speed
+  (320). The gentle exponent keeps a clear slowdown without a harsh early
+  drop — tiny fish cap at 1.8x base, a fish at the 300 mass cap runs at
+  ~77% base (~246). Boost duration also shrinks with mass (full 1.5s for
+  small fish down to ~375ms at the 300 cap).
 
   Background:
     Given a fresh world
@@ -11,7 +13,7 @@ Feature: Mass-based balancing
     Given a player "Alpha" at (4000, 4000) with mass 50
     When "Alpha" sends input (1, 0)
     And the world advances 1 seconds
-    Then the speed of "Alpha" is approximately 420
+    Then the speed of "Alpha" is approximately 378
 
   Scenario: A 100-mass fish runs at base speed (reference point)
     Given a player "Alpha" at (4000, 4000) with mass 100
@@ -19,29 +21,16 @@ Feature: Mass-based balancing
     And the world advances 1 seconds
     Then the speed of "Alpha" is approximately 320
 
-  Scenario: A 1000-mass fish has lost notable speed
-    Given a player "Alpha" at (4000, 4000) with mass 1000
+  Scenario: A fish at the 300 mass cap has lost notable speed
+    Given a player "Alpha" at (4000, 4000) with mass 300
     When "Alpha" sends input (1, 0)
     And the world advances 1 seconds
-    Then "Alpha" has speed at most 160
-
-  Scenario: A 2000-mass fish is meaningfully slower
-    Given a player "Alpha" at (4000, 4000) with mass 2000
-    And baseline position of "Alpha"
-    When "Alpha" sends input (1, 0)
-    And the world advances 1 seconds
-    Then "Alpha" has moved at least 60 units
-    And "Alpha" has speed at most 110
-
-  Scenario: A 5000-mass fish is near the speed floor
-    Given a player "Alpha" at (4000, 4000) with mass 5000
-    When "Alpha" sends input (1, 0)
-    And the world advances 1 seconds
-    Then the speed of "Alpha" is approximately 64
+    Then the speed of "Alpha" is approximately 246
 
   Scenario: A small fish outruns a large fish at the same input
-    Given a player "Small" at (2000, 2000) with mass 30
-    And a player "Big" at (6000, 6000) with mass 120
+    # Gap widened (20 vs 200) so the gentler curve still clears 1.5× — speed ratio ~1.74.
+    Given a player "Small" at (2000, 2000) with mass 20
+    And a player "Big" at (6000, 6000) with mass 200
     And baseline position of "Small"
     And baseline position of "Big"
     When "Small" sends input (1, 0)
@@ -50,7 +39,7 @@ Feature: Mass-based balancing
     Then "Small" has moved at least 1.5 times as far as "Big"
 
   Scenario: Boost duration shrinks at high mass
-    Given a player "Alpha" at (4000, 4000) with mass 5000
+    Given a player "Alpha" at (4000, 4000) with mass 300
     When "Alpha" sends input (1, 0) with boost
     And the world advances 500 ms
     Then "Alpha" is not boosting

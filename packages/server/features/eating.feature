@@ -35,7 +35,7 @@ Feature: Eating mechanics
     And there is at least 1 chunk in the world
 
   Scenario: Fish at the same mass cannot swallow each other (they bite instead)
-    # Neither is 1.15× bigger, so neither can swallow whole — but facing each other in contact they
+    # Neither is 1.25× bigger, so neither can swallow whole — but facing each other in contact they
     # now take light bites, so both lose a little mass while both stay alive.
     Given a player "Alpha" at (1000, 1000) with mass 20
     And a player "Beta" at (1000, 1000) with mass 20
@@ -45,24 +45,24 @@ Feature: Eating mechanics
     And "Alpha" has at most mass 19.8
     And "Beta" has at most mass 19.8
 
-  Scenario: A predator just below the 1.15× ratio cannot swallow its target (it bites instead)
-    # 11 vs 10 is under the swallow ratio, so Alpha cannot eat Beta whole on this tick — it bites
-    # Beta for chip damage instead (and would swallow once Beta is softened below the ratio).
-    Given a player "Alpha" at (1000, 1000) with mass 11
+  Scenario: A predator just below the 1.25× ratio cannot swallow its target (it bites instead)
+    # 12 vs 10 is under the swallow ratio (needs 12.5), so Alpha cannot eat Beta whole on this tick —
+    # it bites Beta for chip damage instead (and would swallow once Beta is softened below the ratio).
+    Given a player "Alpha" at (1000, 1000) with mass 12
     And a player "Beta" at (1000, 1000) with mass 10
     When the world advances 1 tick
     Then "Alpha" is alive
     And "Beta" is alive
     And "Beta" has at most mass 9
 
-  Scenario: A predator exactly at the 1.15× ratio CAN eat (boundary)
-    Given a player "Alpha" at (1000, 1000) with mass 11.5
+  Scenario: A predator exactly at the 1.25× ratio CAN eat (boundary)
+    Given a player "Alpha" at (1000, 1000) with mass 12.5
     And a player "Beta" at (1000, 1000) with mass 10
     When the world advances 1 tick
     Then "Beta" is dead
 
-  Scenario: A predator at 1.2× ratio CAN eat (drift sentinel)
-    Given a player "Alpha" at (1000, 1000) with mass 12
+  Scenario: A predator at 1.3× ratio CAN eat (drift sentinel)
+    Given a player "Alpha" at (1000, 1000) with mass 13
     And a player "Beta" at (1000, 1000) with mass 10
     When the world advances 1 tick
     Then "Beta" is dead

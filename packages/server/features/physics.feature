@@ -16,19 +16,19 @@ Feature: Player movement physics
     Given a player "Alpha" at (4000, 4000) with mass 10
     When "Alpha" sends input (1, 1)
     And the world advances 1 seconds
-    Then the speed of "Alpha" is approximately 640
+    Then the speed of "Alpha" is approximately 556
 
   Scenario: Boost triples speed while the boost window is active
     Given a player "Alpha" at (4000, 4000) with mass 10
     When "Alpha" sends input (1, 0) with boost
     And the world advances 500 ms
-    Then the speed of "Alpha" is approximately 1920
+    Then the speed of "Alpha" is approximately 1668
 
   Scenario: After the boost window, speed reverts to base
     Given a player "Alpha" at (4000, 4000) with mass 10
     When "Alpha" sends input (1, 0) with boost
     And the world advances 2000 ms
-    Then the speed of "Alpha" is approximately 640
+    Then the speed of "Alpha" is approximately 556
 
   Scenario: Player is clamped to the arena boundary
     Given a player "Alpha" at (50, 4000) with mass 10

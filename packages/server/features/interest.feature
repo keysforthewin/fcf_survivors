@@ -25,12 +25,12 @@ Feature: Snapshot interest management
   Scenario: The you-block carries velocity and move speed for client prediction
     # The client predictor seeds reconciliation from you.{vx,vy} and computes desired
     # velocity from you.moveSpeed (base speed after passive + mass multipliers).
-    # mass 10, no passives → 320 * massSpeedMult(10) capped at 2.0 = 640.
+    # mass 10, no passives → 320 * massSpeedMult(10) = 320 * 10^0.24 ≈ 556.1.
     Given a player "Self" at (4000, 4000) with mass 10
     When "Self" sends input (1, 0)
     And the world advances 30 ticks
     And "Self" builds a snapshot
-    Then "Self"'s snapshot self moveSpeed is 640
+    Then "Self"'s snapshot self moveSpeed is 556.1
     And "Self"'s snapshot self velocity points in +X
 
   Scenario: A friend that moves out of view appears in removed exactly once

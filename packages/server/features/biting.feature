@@ -63,11 +63,12 @@ Feature: Biting prey you cannot yet swallow
     And "Beta" has at least mass 17
 
   Scenario: Biting softens prey until it can be swallowed whole
-    # Tick 1: Alpha (11) bites Beta (10) down to ~8.4. Now Alpha is >1.15x bigger, so tick 2 it
-    # swallows Beta whole — Beta dies, Alpha grows by Beta's mass, and a burp chunk is dropped.
-    Given a player "Alpha" at (1000, 1000) with mass 11
+    # Tick 1: Alpha (13) bites Beta (11) down to ~9.4 (and takes a small nibble back to ~12.2).
+    # Now Alpha is >1.25x bigger, so tick 2 it swallows Beta whole — Beta dies, Alpha grows by
+    # Beta's mass, and a burp chunk is dropped.
+    Given a player "Alpha" at (1000, 1000) with mass 13
     And "Alpha" has heading (1, 0)
-    And a player "Beta" at (1015, 1000) with mass 10
+    And a player "Beta" at (1015, 1000) with mass 11
     When the world advances 2 ticks
     Then "Beta" is dead
     And "Alpha" has kill count 1
