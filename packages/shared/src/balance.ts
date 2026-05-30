@@ -52,7 +52,13 @@ export const FRUIT = {
 
 export const AI = {
   minPopulation: 20,
-  startMassMin: 5,
+  /** AI (re)spawn at a uniform-random mass in [spawnMassMin, spawnMassMax] — a mix of small
+   *  snacks and already-threatening fish, rather than everyone starting tiny. */
+  spawnMassMin: 25,
+  spawnMassMax: 200,
+  /** Baseline mass for the hunt/leash/aggro radius curves: a fish at/below this gets the floor
+   *  radius, bigger fish scale up (see aiHuntRadius/aiLeashRadius/aiAggroRamp). Kept small and
+   *  independent of the spawn range so even mid-size spawns hunt with a meaningful radius. */
   startMassMax: 25,
   wanderSpeed: 140,
   fleeSpeed: 240,

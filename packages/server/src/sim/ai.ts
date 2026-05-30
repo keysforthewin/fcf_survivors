@@ -94,7 +94,7 @@ function carDodgeDir(fish: Fish, car: Projectile): { x: number; y: number } {
 
 export function spawnAiFish(world: World, mass?: number): Fish {
   const rng = world.rng;
-  const m = mass ?? (AI.startMassMin + rng() * (AI.startMassMax - AI.startMassMin));
+  const m = mass ?? (AI.spawnMassMin + rng() * (AI.spawnMassMax - AI.spawnMassMin));
   const id = world.nextId();
   const now = world.now();
   const x = rng() * ARENA.width;
