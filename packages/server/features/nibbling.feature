@@ -20,12 +20,14 @@ Feature: Nibbling a bigger fish
     And "Minnow" is alive
 
   Scenario: Nibbles are rate-limited so sustained contact does not machine-gun damage
-    # Five ticks (250ms) is inside the 320ms cooldown, so only the first nibble lands.
+    # Five ticks (250ms) is inside the 320ms cooldown, so only the first nibble lands: Whale loses
+    # ~0.8 (one nibble) plus ~0.13 of mass-scaled decay over 5 ticks → ~99.07. Five nibbles would
+    # drop it below 96, so the band proves exactly one landed.
     Given a player "Whale" at (1000, 1000) with mass 100
     And "Whale" has heading (1, 0)
     And a player "Minnow" at (980, 1000) with mass 20
     When the world advances 5 ticks
-    Then "Whale" has at least mass 99
+    Then "Whale" has mass between 98.5 and 99.5
 
   Scenario: A smaller fish can nibble a bigger one from behind past normal contact range
     # Whale swims +x; Minnow chases 120px behind it — past the ~105px contact span for these masses,
@@ -46,4 +48,5 @@ Feature: Nibbling a bigger fish
     And "Whale" has heading (1, 0)
     And a player "Minnow" at (980, 1000) with mass 20
     When the world advances 1 tick
-    Then "Minnow" has mass 20
+    # Minnow takes no nibble damage — only one tick of mass-scaled decay (~0.005) → ~19.995.
+    Then "Minnow" has mass approximately 20

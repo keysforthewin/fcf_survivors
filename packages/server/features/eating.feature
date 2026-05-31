@@ -10,7 +10,8 @@ Feature: Eating mechanics
     Given a player "Alpha" at (1000, 1000) with mass 10
     And a pellet at (1005, 1000)
     When the world advances 1 tick
-    Then "Alpha" has mass 11
+    # +1 from the pellet, minus one tick of mass-scaled decay (~0.003) → ~11.0.
+    Then "Alpha" has mass approximately 11
     And "Alpha" has XP 1
     And there are 0 pellets remaining
 

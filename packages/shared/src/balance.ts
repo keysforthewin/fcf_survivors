@@ -176,6 +176,10 @@ export const MASS_DECAY = {
   /** Hard cap on player mass — eating cannot push past this. XP/levels keep growing past it;
    *  only physical size is capped. AI share the same ceiling (AI.maxMass). */
   maxMass: 300,
+  /** Mass lost per second scales linearly with current mass: rate = mass · ratePerMassPerSec.
+   *  At 0.005 that's 0.05/s for a fresh spawn (mass 10), 0.5/s at mass 100, 1/s at mass 200, 1.5/s
+   *  at the mass-300 cap — bigger fish bleed proportionally faster. */
+  ratePerMassPerSec: 0.005,
 } as const;
 
 /** Hard mass cap for a fish — eating cannot push it past this. AI fish stop at
@@ -435,14 +439,14 @@ export function boostCooldownForMass(mass: number): number {
 }
 
 /**
- * Mass decay scales as a power-law of current mass: rate = 0.5 * (mass / 100)^1.2.
- * Calibrated so a fresh spawn at startMass barely bleeds (~0.03/s), a 100-mass
- * fish loses ~0.5/s, a 1000-mass fish ~8/s, and a 5000-mass leviathan ~55/s.
- * Returns 0 at or below startMass so a just-spawned fish stays at start mass.
+ * Mass decay scales linearly with current mass: rate = mass · MASS_DECAY.ratePerMassPerSec.
+ * A fresh spawn (mass 10) bleeds ~0.05/s, a 100-mass fish 0.5/s, a 200-mass fish 1/s, and a
+ * 300-mass fish 1.5/s — bigger fish bleed proportionally faster. Returns 0 at or below startMass
+ * so a just-spawned fish stays at start mass.
  */
 export function massDecayPerSec(mass: number): number {
   if (mass <= FISH.startMass) return 0;
-  return 0.5 * Math.pow(mass / 100, 1.2);
+  return mass * MASS_DECAY.ratePerMassPerSec;
 }
 
 export function xpForLevel(level: number): number {

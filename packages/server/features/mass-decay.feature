@@ -1,9 +1,10 @@
 Feature: Mass decay and 300 cap
-  Player mass bleeds away every tick on a power-law curve in current mass —
-  fresh spawns barely lose anything (~0.03/s near startMass), a 100-mass
-  fish loses ~0.5/s, a 200-mass fish ~1.15/s, and a 300-mass fish (the cap)
-  ~1.87/s. The mass ceiling is 300; eating beyond that is clamped (XP/levels
-  still grow). AI fish are exempt from decay and share the same 300 cap.
+  Player mass bleeds away in proportion to current mass (rate = mass · 0.005/s)
+  once above startMass — so a fresh spawn barely leaks (~0.05/s) while a heavier
+  fish bleeds proportionally faster (~1/s at mass 200, ~1.5/s at the 300 cap).
+  Fresh spawns at/below startMass don't decay. The mass ceiling is 300; eating
+  beyond that is clamped (XP/levels still grow). AI fish are exempt from decay
+  and share the same 300 cap.
 
   Background:
     Given a fresh world
@@ -13,20 +14,20 @@ Feature: Mass decay and 300 cap
     When the world advances 10 seconds
     Then "Alpha" has mass 10
 
-  Scenario: Light fish lose mass slowly
+  Scenario: A small fish bleeds slowly (~0.5/s at mass 100)
     Given a player "Tiny" at (500, 500) with mass 100
     When the world advances 2 seconds
-    Then "Tiny" has mass between 98 and 100
+    Then "Tiny" has mass between 98.5 and 99.5
 
-  Scenario: Mid-mass fish lose mass noticeably
+  Scenario: A heavier fish bleeds proportionally faster (~1/s at mass 200)
     Given a player "Mid" at (1500, 1500) with mass 200
     When the world advances 2 seconds
-    Then "Mid" has mass between 196 and 199
+    Then "Mid" has mass between 197.5 and 198.5
 
-  Scenario: A fish at the cap bleeds fastest
+  Scenario: A fish at the cap bleeds fastest (~1.5/s at mass 300)
     Given a player "Big" at (3000, 3000) with mass 300
     When the world advances 2 seconds
-    Then "Big" has mass between 295 and 297
+    Then "Big" has mass between 296.5 and 297.5
 
   Scenario: Mass cap clamps eating at 300
     Given a player "Glutton" at (1000, 1000) with mass 295

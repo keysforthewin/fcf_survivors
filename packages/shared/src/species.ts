@@ -37,6 +37,12 @@ export const SPECIES: readonly SpeciesDef[] = [
   { id: "barreleye", label: "Barreleye", accentColor: "#46d6a0" },
   { id: "leafy-sea-dragon", label: "Leafy Sea Dragon", accentColor: "#c8c24e" },
   { id: "mantis-shrimp", label: "Mantis Shrimp", accentColor: "#19c98a" },
+  { id: "bluefin-tuna", label: "Bluefin Tuna", accentColor: "#3566b0" },
+  { id: "triggerfish", label: "Triggerfish", accentColor: "#e8c33a" },
+  { id: "humphead-parrotfish", label: "Humphead Parrotfish", accentColor: "#4f9e86" },
+  { id: "giant-grouper", label: "Giant Grouper", accentColor: "#8a7350" },
+  { id: "frogfish", label: "Frogfish", accentColor: "#ef8a2e" },
+  { id: "hammerhead-shark", label: "Hammerhead Shark", accentColor: "#5f7385" },
 ] as const;
 
 export const DEFAULT_SPECIES_ID = SPECIES[0]!.id;
