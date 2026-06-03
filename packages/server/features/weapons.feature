@@ -63,32 +63,32 @@ Feature: Weapon damage
     When the world advances 1 tick
     Then the latest hit was from weapon "pulse"
 
-  Scenario: Each fish a single pulse strikes counts as its own hit
-    # Targets sit ~180 units out — inside the 280 pulse radius but beyond Apex's
+  Scenario: Each fish a chain pulse strikes counts as its own hit
+    # Targets sit ~180 units out — inside the 500 eel radius but beyond Apex's
     # ~133 eat reach, so they're damaged (and counted) without being swallowed.
-    # Lv2 pulse caps targets at 2 — both fish in range stay below the cap.
+    # Eel (chain pulse) has no target cap, so both fish in range are struck.
     Given a player "Apex" at (4000, 4000) with mass 50
-    And "Apex" has weapon "pulse" at level 2
+    And "Apex" has weapon "eel" at level 1
     And an AI fish "Left" at (3820, 4000) with mass 20
     And an AI fish "Up" at (4000, 4180) with mass 20
     When the world advances 1 tick
     Then "Apex" has 2 weapon hits
     And "Apex" has dealt at least 2 damage
 
-  Scenario: A pulse emits a radial zap to every struck fish
-    # Same layout as the per-hit scenario above: both targets inside the 280
-    # pulse radius but beyond Apex's ~133 eat reach (Lv2 pulse, cap = 2).
+  Scenario: ESP emits a non-chain zap to its single (nearest) struck fish
+    # Two fish in range; ESP caps targets at 1 at every level, so only the
+    # closer ("Left", ~180 units) is zapped — and the zap radiates (not a chain).
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 2
     And an AI fish "Left" at (3820, 4000) with mass 20
-    And an AI fish "Up" at (4000, 4180) with mass 20
+    And an AI fish "Up" at (4000, 4280) with mass 20
     When the world advances 1 tick
     Then a zap event was emitted by "Apex"
     And the zap is not a chain
-    And the zap strikes "Left" and "Up"
+    And the zap strikes "Left"
 
   Scenario: ESP caps targets to one at level 1, striking the nearest fish
-    # Two fish in range; Lv1 cap = 1, so only the closer ("Left", ~180 units)
+    # Two fish in range; cap = 1, so only the closer ("Left", ~180 units)
     # is hit, not the farther ("Far", ~240 units).
     Given a player "Apex" at (4000, 4000) with mass 50
     And "Apex" has weapon "pulse" at level 1

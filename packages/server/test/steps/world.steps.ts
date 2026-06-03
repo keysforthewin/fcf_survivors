@@ -365,6 +365,45 @@ Then("{string} is dead", function (this: TestWorld, name: string) {
   assert.equal(f.alive, false, `Expected ${name} dead but still alive`);
 });
 
+Then("{string} is biting", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing from world`);
+  assert.equal(
+    f.bitingTick, sim.world.tick,
+    `Expected ${name} to be biting this tick (bitingTick=${f.bitingTick}, tick=${sim.world.tick})`,
+  );
+});
+
+Then("{string} is not biting", function (this: TestWorld, name: string) {
+  const sim = this.requireSim();
+  const f = tryFish(sim, name);
+  assert.ok(f, `${name} missing from world`);
+  assert.notEqual(f.bitingTick, sim.world.tick, `Expected ${name} NOT to be biting this tick`);
+});
+
+Then(
+  "a bite toast was emitted for {string} by {string}",
+  function (this: TestWorld, victim: string, attacker: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const aid = sim.byName.get(attacker);
+    assert.ok(vid != null && aid != null, `Unknown fish in bite-toast assertion (${victim}/${attacker})`);
+    const found = sim.world.bittenEvents.some((e) => e.id === vid && e.by === aid);
+    assert.ok(found, `Expected a bite toast for ${victim} by ${attacker}; got ${JSON.stringify(sim.world.bittenEvents)}`);
+  },
+);
+
+Then(
+  "there are {int} bite toasts for {string}",
+  function (this: TestWorld, count: number, victim: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const n = sim.world.bittenEvents.filter((e) => e.id === vid).length;
+    assert.equal(n, count, `Expected ${count} bite toasts for ${victim}, got ${n}`);
+  },
+);
+
 Then("{string} has been removed from the world", function (this: TestWorld, name: string) {
   const sim = this.requireSim();
   const id = sim.byName.get(name);

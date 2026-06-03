@@ -1,4 +1,4 @@
-import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
+import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type PlayerBittenMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
 import { ARENA, TICK, DEFAULT_SPECIES_ID, isSpeciesId } from "@fcf/shared";
 import { applyClientWeaponHit } from "./sim/weapon.ts";
 import { World, type WorldDeps } from "./sim/world.ts";
@@ -314,6 +314,19 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       if (ws) broadcastLeaderboard(ws).catch(() => {});
       else broadcastLeaderboard().catch(() => {});
     }
+
+    // "Bitten" toasts: a human player took a bite this tick (new engagement). Broadcast to everyone
+    // (including the victim — they're alive, unlike a death). Skip any victim already removed this
+    // tick (a bite that killed them is covered by playerDied). The attacker may be an AI fish.
+    for (const ev of world.bittenEvents) {
+      const victim = world.fish.get(ev.id);
+      if (!victim) continue;
+      const attacker = world.fish.get(ev.by);
+      broadcast(
+        { t: "playerBitten", name: victim.name, color: victim.color, byName: attacker?.name ?? "the void" } satisfies PlayerBittenMsg,
+      );
+    }
+    world.bittenEvents.length = 0;
 
     // level up handling — extracted so tests and prod use the same code path
     processLevelUps(world);

@@ -6,6 +6,7 @@ import type {
   LevelUpMsg,
   PlayerJoinedMsg,
   PlayerDiedMsg,
+  PlayerBittenMsg,
   RosterMsg,
   SnapshotMsg,
   WelcomeMsg,
@@ -19,6 +20,7 @@ type ServerMsg =
   | LeaderboardMsg
   | PlayerJoinedMsg
   | PlayerDiedMsg
+  | PlayerBittenMsg
   | RosterMsg;
 
 type Handler<T extends ServerMsg> = (msg: T) => void;

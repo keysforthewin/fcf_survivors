@@ -105,11 +105,14 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       // the old reach. `radius` is left small — it only feeds the HUD + the
       // MAX_PROJECTILE_RADIUS snapshot pad, and ESP draws as lightning to struck
       // fish (no fixed-radius blob), so the visual already scales with the reach.
+      // maxTargets stays at 1 for every level: ESP only ever zaps the single
+      // nearest visible fish (pulseAt sorts candidates by distance). Levels scale
+      // damage/range/cooldown — not the number of victims.
       { damage: 1, cooldownMs: 5000, range: 2500, pulseRadius: 2500, lifetimeMs: 220, radius: 250, maxTargets: 1 },
-      { damage: 2, cooldownMs: 4800, range: 2800, pulseRadius: 2800, lifetimeMs: 220, radius: 280, maxTargets: 2 },
-      { damage: 3, cooldownMs: 4600, range: 3100, pulseRadius: 3100, lifetimeMs: 240, radius: 310, maxTargets: 3 },
-      { damage: 4, cooldownMs: 4400, range: 3400, pulseRadius: 3400, lifetimeMs: 260, radius: 340, maxTargets: 4 },
-      { damage: 5, cooldownMs: 4200, range: 3800, pulseRadius: 3800, lifetimeMs: 280, radius: 380, maxTargets: 5 },
+      { damage: 2, cooldownMs: 4800, range: 2800, pulseRadius: 2800, lifetimeMs: 220, radius: 280, maxTargets: 1 },
+      { damage: 3, cooldownMs: 4600, range: 3100, pulseRadius: 3100, lifetimeMs: 240, radius: 310, maxTargets: 1 },
+      { damage: 4, cooldownMs: 4400, range: 3400, pulseRadius: 3400, lifetimeMs: 260, radius: 340, maxTargets: 1 },
+      { damage: 5, cooldownMs: 4200, range: 3800, pulseRadius: 3800, lifetimeMs: 280, radius: 380, maxTargets: 1 },
     ],
   },
   ink: {

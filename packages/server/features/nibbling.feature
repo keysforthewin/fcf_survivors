@@ -1,8 +1,10 @@
 Feature: Nibbling a bigger fish
   A fish smaller than the one it is touching cannot swallow it, so instead it takes a bite out
-  of it for damage equal to its level (drained from the target's mass, which is its health). The
-  bite is rate-limited by the same cooldown as the bite lunge, so sustained contact can't
-  machine-gun damage. Nibbling never eats the bigger fish — only being swallowed whole kills.
+  of it for damage equal to its level (drained from the target's mass, which is its health). A
+  nibble lands from ANY angle but needs actual contact — the body-edge gap must be within the eat
+  reach (~5px); there is no behind-approach bonus. The bite is rate-limited by the same cooldown as
+  the bite lunge, so sustained contact can't machine-gun damage. Nibbling never eats the bigger
+  fish — only being swallowed whole kills.
 
   Background:
     Given a fresh world
@@ -29,17 +31,16 @@ Feature: Nibbling a bigger fish
     When the world advances 5 ticks
     Then "Whale" has mass between 98.5 and 99.5
 
-  Scenario: A smaller fish can nibble a bigger one from behind past normal contact range
-    # Whale swims +x; Minnow chases 120px behind it — past the ~105px contact span for these masses,
-    # so only the behind-approach reach lets the nibble land. One nibble (level 1) drains 0.8 mass.
+  Scenario: A nibble needs actual contact — no behind-reach bonus
+    # Whale faces +x; Minnow chases 120px behind it (rA+rB ≈ 99, so a ~21px gap — well past the ~5px
+    # eat reach). With the behind-approach bonus gone, the nibble does NOT land and Whale is unharmed.
     Given a player "Whale" at (1000, 1000) with mass 100
     And "Whale" has heading (1, 0)
     And a player "Minnow" at (880, 1000) with mass 20
     And "Minnow" has heading (1, 0)
     When the world advances 1 tick
-    Then "Whale" is alive
-    And "Whale" has at most mass 99.5
-    And "Whale" has at least mass 99
+    # Only one tick of mass-scaled decay (~0.5/s → ~0.025) shaves Whale → ~99.975.
+    Then "Whale" has mass approximately 100
 
   Scenario: A bigger fish does not nibble the smaller fish it is touching
     # Only the smaller fish nibbles. Whale (bigger) touching Minnow from behind neither eats nor

@@ -106,11 +106,20 @@ export interface Fish {
   name: string;
   isAi: boolean;
   /**
-   * Server tick on which this fish last swallowed prey whole. The snapshot builder turns
+   * Server tick on which this fish last swallowed prey whole OR played a bite wind-up (closing in
+   * on swallowable prey within the bite-animation reach). The snapshot builder turns
    * `bitingTick === world.tick` into a transient `biting` flag so clients play the
-   * mouth-open chomp/lurch animation on the eater. Undefined until the first eat.
+   * mouth-open chomp/lurch animation on the eater. Undefined until the first bite/eat.
    */
   bitingTick?: number;
+  /** Wall-time of this fish's last bite-animation WIND-UP pulse (closing on swallowable prey but not
+   *  yet eating); gates BITE.cooldownMs so the chomp pulses rhythmically instead of every tick. */
+  lastBiteAnimAt?: number;
+  /** Per-attacker wall-time of the last "bitten" toast this (human) fish emitted, keyed by attacker
+   *  id. Gates the toast to once per attacker→victim engagement — a gap > BITE.toastEngagementMs from
+   *  the SAME attacker counts as a fresh engagement. Per-attacker (not a single slot) so two fish
+   *  ganging up don't each read as "fresh" every alternating bite. Pruned to the engagement window. */
+  biteToastAt?: Map<number, number>;
   /** Server tick on which this fish last took a quick BITE — either nibbling a bigger fish, or
    *  biting prey it's bigger than but can't yet swallow → transient `nibbling` flag (quick nip anim). */
   nibblingTick?: number;

@@ -472,6 +472,9 @@ export class ArenaScene {
         : `${msg.name} was eaten by ${msg.byName}`;
       this.toastHud.show(text, msg.color);
     });
+    this.net.on("playerBitten", (msg) => {
+      this.toastHud.show(`${msg.name} was bitten by ${msg.byName}`, msg.color);
+    });
     this.net.on("roster", (msg) => this.rosterHud.update(msg.players));
   }
 
@@ -766,7 +769,15 @@ export class ArenaScene {
     // Fish swallowed whole this tick: hand the victim's sprite to the suck-in animation BEFORE the
     // removed loop, so the matching `removed` entry is a no-op (the swallow owns the teardown).
     if (msg.swallowed && msg.swallowed.length > 0) {
-      for (const s of msg.swallowed) this.beginSwallow(s.id, s.by);
+      for (const s of msg.swallowed) {
+        // "Ate X" toast when WE swallowed an AI fish. Human victims are already covered by the
+        // broadcast playerDied "X was eaten by <me>" toast, so don't double up on those.
+        if (s.by === this.selfId) {
+          const victim = this.fishes.get(s.id);
+          if (victim && victim.isAi) this.toastHud.show(`Ate ${victim.name}`, victim.color);
+        }
+        this.beginSwallow(s.id, s.by);
+      }
     }
 
     for (const id of msg.removed) {
@@ -1166,11 +1177,13 @@ export class ArenaScene {
 
   /**
    * Own-fish bite prediction (animation + lunge only; the server resolves the real eat/nibble/burp
-   * from our reported position). Mirrors the server rules so we don't mispredict:
-   *  - EAT: a fish we can swallow, contacted within our FRONT mouth cone → big chomp + strong lurch.
-   *  - NIBBLE: a BIGGER fish we're touching from any angle → quick nip + small dart-in.
+   * from our reported position). Mirrors the server's gap model so we don't mispredict:
+   *  - EAT: a fish we can swallow, facing it (front cone), mouth on it (gap ≤ eatReach) → big chomp + lurch.
+   *  - NIBBLE: a BIGGER fish we're touching (gap ≤ eatReach, any angle) → quick nip + small dart-in.
+   *  - BITE: equal / between-zone prey we face and touch → quick nip + lurch.
+   *  - WIND-UP: swallowable prey we're closing on (eatReach < gap ≤ biteReach, facing) → cosmetic chomp only.
    * Uses our reported heading (selfHx/selfHy — exactly what the server cones against) and the
-   * predicted render position. Cooldown-gated so sustained contact doesn't stack lunges.
+   * predicted render position. Cooldown-gated so the chomp pulses instead of stacking lunges/anims.
    */
   private detectBites(now: number): void {
     if (now - this.selfLastBiteAt < BITE.cooldownMs) return;
@@ -1179,37 +1192,35 @@ export class ArenaScene {
     const rSelf = fishRadius(this.youMass);
     const cx = this.selfRenderX;
     const cy = this.selfRenderY;
-    // Behind-approach reach scales with our Close Encounters stacks — mirror the server's mult.
+    // Eat reach mirrors the server: flat MOUTH.eatReach, scaled by our Close Encounters stacks. The
+    // bite-animation (wind-up) reach is biteReachMult× that.
     const ce = this.youPassives.find((p) => p.id === "closeEncounters");
     const eatMult = ce ? eatRangeMultForStack(ce.stack) : 1;
-    const selfMoving = Math.hypot(this.selfHx, this.selfHy) > 0.01;
+    const eatReach = MOUTH.eatReach * eatMult;
+    const biteReach = eatReach * MOUTH.biteReachMult;
+    const stationary = Math.hypot(this.selfHx, this.selfHy) < MOUTH.stationaryHeadingEps;
+    let windup = false; // swallowable prey in the wind-up band (no actual eat in range) → cosmetic chomp
     for (const f of this.fishes.values()) {
       if (f.id === this.selfId) continue;
       const dx = f.sprite.container.x - cx;
       const dy = f.sprite.container.y - cy;
       const dist = Math.hypot(dx, dy);
-      // Chasing prey from behind extends our reach far past contact (matches the server). `dx/dy`
-      // are target − self, so aheadDot = targetHeading · unit(self − target); <= -behindCos = behind.
-      let behindReach = 0;
-      const h = this.fishHeading.get(f.id);
-      if (h && selfMoving && dist > 0.001) {
-        const bMag = Math.hypot(h.hx, h.hy);
-        const dot = (this.selfHx * dx + this.selfHy * dy) / dist;
-        if (bMag >= MOUTH.stationaryHeadingEps && dot >= MOUTH.coneCos) {
-          const aheadDot = (h.hx * -dx + h.hy * -dy) / (bMag * dist);
-          if (aheadDot <= -MOUTH.behindCos) behindReach = MOUTH.behindReachBonus * eatMult;
-        }
-      }
-      if (dist > rSelf + fishRadius(f.mass) + BITE.contactPad + behindReach) continue; // not in contact
+      const gap = dist - rSelf - fishRadius(f.mass);
+      if (gap > biteReach) continue; // too far for even the wind-up
+      const dot = (!stationary && dist > 0.001) ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;
+      const inFront = stationary || dot >= MOUTH.coneCos;
       if (canSwallow(this.youMass, f.mass)) {
-        // Eating requires facing the prey (front cone) — matches the server's front-of-face rule.
-        const dot = dist > 0.001 ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;
-        if (dot < MOUTH.coneCos) continue;
-        this.selfLastBiteAt = now;
-        this.pendingLunge = BITE.eatLungeImpulse;
-        me.sprite.triggerBite("eat");
-        return;
+        if (inFront && gap <= eatReach) {
+          this.selfLastBiteAt = now;
+          this.pendingLunge = BITE.eatLungeImpulse;
+          me.sprite.triggerBite("eat");
+          return;
+        }
+        // Closing in: remember a wind-up chomp, but keep scanning for a closer prey we can actually eat.
+        if (inFront) windup = true;
+        continue;
       }
+      if (gap > eatReach) continue; // bites/nibbles need real contact — no wind-up band
       if (f.mass > this.youMass) {
         // Smaller than this fish → nibble it (any angle).
         this.selfLastBiteAt = now;
@@ -1217,17 +1228,20 @@ export class ArenaScene {
         me.sprite.triggerBite("nibble");
         return;
       }
-      if (this.youMass >= f.mass) {
-        // Bigger than this fish but can't swallow it yet (the "between zone"), or equal size →
-        // light BITE. Requires facing the prey (front cone), matching the server's bite rule; the
-        // server resolves the real damage from our reported position. A fuller lunge than a nibble.
-        const dot = dist > 0.001 ? (this.selfHx * dx + this.selfHy * dy) / dist : 1;
-        if (dot < MOUTH.coneCos) continue;
+      // Bigger than f but can't swallow it (the "between zone"), or equal size → light BITE. Requires
+      // facing the prey, matching the server; the server resolves the real damage from our position.
+      if (inFront) {
         this.selfLastBiteAt = now;
         this.pendingLunge = BITE.lungeImpulse;
         me.sprite.triggerBite("nibble");
         return;
       }
+    }
+    // No contact eat/bite/nibble landed, but we're closing on swallowable prey → cosmetic wind-up chomp
+    // (the server owns the real eat). Same cooldown gate so it pulses rather than firing every frame.
+    if (windup) {
+      this.selfLastBiteAt = now;
+      me.sprite.triggerBite("eat");
     }
   }
 
@@ -1885,7 +1899,7 @@ export class ArenaScene {
       }
       const hx = heading.hx / hmag;
       const hy = heading.hy / hmag;
-      const bite = r + MOUTH.suctionExtraRadius;
+      const bite = r + MOUTH.eatReach;
       let g = this.mouthIndicators.get(f.id);
       if (!g) {
         g = new Graphics();

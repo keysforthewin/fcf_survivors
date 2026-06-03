@@ -62,7 +62,11 @@ export const AI = {
   startMassMax: 25,
   wanderSpeed: 140,
   fleeSpeed: 240,
-  chaseSpeed: 220,
+  // Deliberately just BELOW fleeSpeed: with mouth-on (≈5px) eating and no behind-approach bonus, a
+  // predator has to physically reach its prey. Edible prey flee (threatRatio) and panic-burst away
+  // (fleePanicSpeed) first, so a clean run always escapes — but a chaser this close still punishes a
+  // stall, a bad turn, or getting cornered. Keep it < fleeSpeed so fleeing remains the safe play.
+  chaseSpeed: 235,
   sightRadius: 400,
   /** Switch targets only if a new candidate's distance is < this fraction of the current target's distance. */
   targetSwitchHysteresis: 0.75,
@@ -224,24 +228,22 @@ export const BOOST_COOLDOWN = {
 } as const;
 
 export const MOUTH = {
+  // Front cone: prey must lie within this dot-product of the predator's heading to be eaten or bitten
+  // (≈120° total cone at 0.5). A truly stationary fish (no heading vector) has no cone and eats from
+  // any angle. Measuring the gap off a forward cone is what makes "mouth on the fish" directional.
   coneCos: 0.5,
-  suctionExtraRadius: 6,
-  suctionPullPerTick: 0.45,
+  // Heading magnitude below which a fish counts as stationary (has no facing direction).
   stationaryHeadingEps: 0.05,
-  // Extra grab/suction distance beyond the body before a fish can vacuum prey in.
-  // Scaled by the Close Encounters passive (getEatRangeMult).
-  reachBonus: 80,
-  // Any-contact eating: a fish eats edible prey the moment their hitboxes overlap from
-  // ANY angle (dist <= rA + rB + contactMargin). The front cone + suction below only
-  // governs the *bonus reach* that vacuums prey in from in front — the eat itself is
-  // omnidirectional. A few px of margin makes "just touching" feel responsive.
-  contactMargin: 6,
-  // Behind-approach reach: when a predator is in its target's REAR arc and pointed at it
-  // (i.e. chasing it from behind), the engage distance for eat/bite/nibble extends far past
-  // contact. Scaled by Close Encounters for players (AI gets the base). This is what lets a
-  // chase actually land — fleeing prey is, by definition, approached from behind.
-  behindCos: 0.4,          // rear-arc threshold on the TARGET's heading (~133° arc). aheadDot <= -behindCos = behind.
-  behindReachBonus: 140,   // base extra px (added to rA+rB+contactMargin) for a behind approach, before the passive mult.
+  // Eat reach (px): a fish swallows edible prey the moment the body-edge GAP in front of its mouth is
+  // within this many px — gap = dist(centers) − rA − rB ≤ eatReach, with the prey inside the front
+  // cone. Flat and size-independent: "get your mouth on the fish." Players' Close Encounters passive
+  // multiplies it (getEatRangeMult); AI use the flat base. This GAP is the only thing that eats —
+  // there is no suction and no behind-approach bonus; a chase lands only by closing to within it.
+  eatReach: 5,
+  // Bite-animation reach as a multiple of eatReach: a predator that COULD swallow prey plays the chomp
+  // wind-up while the gap is within eatReach × biteReachMult (and still beyond eatReach), so you can
+  // see a fish closing in to bite before it actually swallows. Cosmetic only — no eat, no damage.
+  biteReachMult: 4,
 } as const;
 
 /**
@@ -253,10 +255,10 @@ export const MOUTH = {
  */
 export const SPAWN = {
   /**
-   * Newly spawned / respawned players cannot be eaten for this long. With any-contact
-   * eating (see MOUTH.contactMargin), a fresh mass-10 fish that spawns next to a bigger
-   * one would otherwise be chomped instantly. The window gives players time to orient and
-   * swim clear. AI fish are not protected.
+   * Newly spawned / respawned players cannot be eaten for this long. Even with front-cone eating
+   * (see MOUTH.eatReach), a fresh mass-10 fish that spawns facing a bigger one would otherwise be
+   * chomped instantly. The window gives players time to orient and swim clear. AI fish are not
+   * protected.
    */
   protectMs: 3000,
 } as const;
@@ -266,8 +268,13 @@ export const BITE = {
   lungeImpulse: 240,
   /** Stronger forward lurch when actually swallowing prey whole (vs a nibble). */
   eatLungeImpulse: 380,
-  /** Min time between lunges per attacker so sustained contact doesn't stack into a rocket. */
+  /** Min time between lunges per attacker so sustained contact doesn't stack into a rocket. Also
+   *  gates the bite-animation wind-up pulse (lastBiteAnimAt) so a predator closing in chomps
+   *  rhythmically rather than every tick. */
   cooldownMs: 320,
+  /** A "bitten" toast fires once per attacker→victim engagement: after this long without another
+   *  bite from the same attacker the pair counts as separated, so re-engaging toasts again. */
+  toastEngagementMs: 1500,
   /**
    * Damage (per attacker level) of a BITE — a fish chomping prey it is bigger than but cannot yet
    * swallow (the "between zone": bigger but under the 1.15× ratio, or equal size). Light by design
@@ -276,8 +283,6 @@ export const BITE = {
    * like a nibble. (Nibbling a BIGGER fish still uses NIBBLE.damagePerLevel.)
    */
   biteDamagePerLevel: 2,
-  /** Extra px added to rA+rB for the client-side own-fish bite detector. */
-  contactPad: 6,
   /** Mouth-open "gulp" deformation (fraction) applied to the sprite over the envelope. */
   gulp: 0.3,
   /** Bite animation envelope (ms). */

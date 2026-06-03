@@ -136,7 +136,8 @@ export interface EntityDelta {
   color?: string;
   /** Fish only (first-seen / on change): chosen species id → which photo sprite to render. */
   species?: string;
-  /** Fish only (transient, set only on the tick this fish swallowed prey whole): drives the eat chomp/lurch anim. */
+  /** Fish only (transient): set on the tick this fish swallowed prey whole, OR while it is closing in
+   *  on swallowable prey within the bite-animation reach (the wind-up) — drives the eat chomp/lurch anim. */
   biting?: boolean;
   /** Projectile only (first-seen): true for a heli BODY (vs. its bullets) so the client renders a heli sprite. */
   body?: boolean;
@@ -355,6 +356,19 @@ export interface PlayerDiedMsg {
   byName: string;
 }
 
+/**
+ * Broadcast when a human player TAKES a bite (nibble or between-zone chip damage) — not a kill.
+ * Fires once per attacker→victim engagement (see BITE.toastEngagementMs) so a sustained chew
+ * doesn't spam. Drives a "‹name› was bitten by ‹byName›" toast. `name`/`color` are the victim;
+ * `byName` is the attacker (which may be an AI fish).
+ */
+export interface PlayerBittenMsg {
+  t: "playerBitten";
+  name: string;
+  color: string;
+  byName: string;
+}
+
 export interface RosterEntry {
   name: string;
   color: string;
@@ -377,4 +391,5 @@ export type ServerMsg =
   | LeaderboardMsg
   | PlayerJoinedMsg
   | PlayerDiedMsg
+  | PlayerBittenMsg
   | RosterMsg;

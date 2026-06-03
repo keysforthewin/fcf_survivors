@@ -36,6 +36,9 @@ export class World {
   zapEvents: ZapEventRecord[] = [];
   /** Fish swallowed whole this tick: { victim id, eater id }. Drives the client suck-in anim. Drained by snapshot builder. */
   swallowEvents: Array<{ id: number; by: number }> = [];
+  /** Human players BITTEN this tick (new engagement, throttled per BITE.toastEngagementMs):
+   *  { victim id, attacker id }. Drained by the tick loop → "bitten" toast broadcast. */
+  bittenEvents: Array<{ id: number; by: number }> = [];
 
   private idCounter = 1;
   tick = 0;
@@ -345,20 +348,37 @@ export class World {
   }
 
   /**
+   * Record a bite taken by `victim` from `attacker`. When `victim` is a human player it enqueues a
+   * "bitten" toast event — but only once per engagement: a different attacker, or no bite from the
+   * same attacker for BITE.toastEngagementMs, counts as a fresh engagement. AI victims are silent.
+   */
+  private recordBite(victim: Fish, attacker: Fish, now: number): void {
+    if (victim.isAi) return;
+    let seen = victim.biteToastAt;
+    if (!seen) { seen = new Map(); victim.biteToastAt = seen; }
+    const fresh = now - (seen.get(attacker.id) ?? -Infinity) > BITE.toastEngagementMs;
+    seen.set(attacker.id, now);
+    if (fresh) this.bittenEvents.push({ id: victim.id, by: attacker.id });
+    // Bound the map: forget attackers we haven't seen within the engagement window.
+    for (const [aid, t] of seen) if (now - t > BITE.toastEngagementMs) seen.delete(aid);
+  }
+
+  /**
    * Spray a swallowed fish's XP forward out of the eater's mouth as a fan of collectable burp
    * chunks. Direction is the eater's remembered heading (a unit vector even at rest), and the speed
    * is sized so a stationary eater's spray drifts to rest ~BURP.landFraction of a screen ahead
    * (chunks decay 6%/tick → total travel ≈ speed·BURP.travelPerSpeed). Deterministic (no RNG) so
    * the eat path doesn't perturb seeded tests.
    */
-  private burpXp(eater: Fish, prey: Fish, rA: number, grab: number, now: number): void {
+  private burpXp(eater: Fish, prey: Fish, rA: number, now: number): void {
     // Eating whole is worth BURP.eatXpMult× a damage-kill — sprayed as collectable XP (BURP.count
     // orbs; currently a single big orb) so swallowing is strictly more rewarding than chipping.
     const total = BURP.eatXpMult * xpDroppedOnDeath(prey.level, prey.mass);
     if (total <= 0) return;
     const hmag = Math.hypot(eater.headingX, eater.headingY) || 1;
     const baseAngle = Math.atan2(eater.headingY / hmag, eater.headingX / hmag);
-    const mouthOffset = rA + MOUTH.suctionExtraRadius * 0.5 + grab;
+    // Spray from the nose (front body edge) — the mouth.
+    const mouthOffset = rA;
     const mx = eater.x + Math.cos(baseAngle) * mouthOffset;
     const my = eater.y + Math.sin(baseAngle) * mouthOffset;
     const landDist = Math.max(0, viewRadius(eater.mass) * BURP.landFraction - mouthOffset);
@@ -591,28 +611,27 @@ export class World {
 
     // (level-ups are applied by processLevelUps; see sim/levelup.ts)
 
-    // collisions: fish eat smaller fish (front-of-face) + smaller fish nibble bigger ones.
-    // Eating now requires FRONT-OF-FACE contact: a moving fish only swallows prey inside its
-    // forward mouth cone (the suction still reels in-cone prey toward the mouth). Contact from the
-    // flank or rear does NOT eat — instead, a smaller fish NIBBLES the bigger one for damage =
-    // its level (mass loss; sustained nibbling angers an AI — see addAggro). A truly stationary
-    // fish (zero heading) still eats on any-angle contact since it has no cone to face with. The
-    // loop runs each fish as the actor `a`, so both "a swallows b" and "a nibbles b" resolve
-    // across iterations.
+    // collisions: a fish swallows smaller fish, bites prey it can't yet swallow, and smaller fish
+    // nibble bigger ones. Eating is GAP-gated off the front mouth: a fish swallows edible prey the
+    // moment the body-edge gap in front of its mouth is within `eatReach` (≈5px flat — see
+    // MOUTH.eatReach; Close Encounters extends it for players) AND the prey sits inside the forward
+    // cone. There is no suction and no behind-approach bonus — a chase lands only by closing your
+    // mouth to within `eatReach`. A truly stationary fish (no heading) has no cone and eats from any
+    // angle. While a predator is still closing in (gap within `biteReach` = eatReach × biteReachMult)
+    // it plays a cosmetic bite WIND-UP (bitingTick) so prey can see it coming. The loop runs each
+    // fish as actor `a`, so "a swallows b", "a bites b" and "a nibbles b" all resolve across iterations.
     const fishList = [...this.fish.values()];
     for (const a of fishList) {
       if (!a.alive) continue;
       const rA = fishRadius(a.mass);
-      // Close Encounters pushes the suction mouth-point farther forward and widens the bite
-      // zone. `grab` is 0 without the passive (and for AI). It scales only the front SUCTION
-      // reach below — the contact-eat is omnidirectional and ignores it.
-      const eatMult = a.isAi ? 1 : getEatRangeMult(a);
-      const grab = MOUTH.reachBonus * (eatMult - 1);
-      // Query wide enough to catch contact with the largest plausible neighbour. A tiny fish
-      // nibbling a huge one needs rB (up to MAX_FISH_RADIUS_PAD) in the radius, not 2·rA — that
-      // only covers prey smaller than the actor. Also covers the forward suction zone and the
-      // (much larger) behind-approach reach below.
-      const reach = rA + MAX_FISH_RADIUS_PAD + MOUTH.suctionExtraRadius + MOUTH.reachBonus + grab * 2 + MOUTH.behindReachBonus * eatMult;
+      // Close Encounters extends a player's eat reach (and, proportionally, the wind-up reach). AI
+      // and fish without the passive use the flat base.
+      const eatReach = MOUTH.eatReach * (a.isAi ? 1 : getEatRangeMult(a));
+      const biteReach = eatReach * MOUTH.biteReachMult;
+      // Query wide enough to catch the largest plausible neighbour. A tiny fish nibbling a huge one
+      // needs rB (up to MAX_FISH_RADIUS_PAD) in the radius, not 2·rA — that only covers prey smaller
+      // than the actor. The bite-animation reach is the farthest engage distance.
+      const reach = rA + MAX_FISH_RADIUS_PAD + biteReach;
       scratch.length = 0;
       this.fishHash.query(a.x, a.y, reach, scratch);
       const headingMag = Math.hypot(a.headingX, a.headingY);
@@ -625,51 +644,27 @@ export class World {
         const dy = b.y - a.y;
         const dist = Math.hypot(dx, dy);
         const rB = fishRadius(b.mass);
-        // Attacker's facing toward this target (reused by the front-cone + behind checks).
+        // Body-edge gap in front of the mouth: <0 means the bodies overlap. The flat reach makes the
+        // eat distance independent of fish size.
+        const gap = dist - rA - rB;
+        // `a`'s facing toward `b`. A stationary fish has no cone, so it counts as facing any prey.
         const dot = (!stationary && dist > 0.001) ? (hx * dx + hy * dy) / dist : 1;
-        // Behind-approach reach: if `a` is in `b`'s REAR arc AND pointed at it (a chase), the
-        // engage distance extends far past contact — scaled by Close Encounters for players, base
-        // for AI. `aheadDot` is b-heading · unit(a − b): +1 = a in front of b, −1 = directly behind.
-        let behindReach = 0;
-        const bMag = Math.hypot(b.headingX, b.headingY);
-        if (!stationary && dist > 0.001 && bMag >= MOUTH.stationaryHeadingEps && dot >= MOUTH.coneCos) {
-          const aheadDot = (b.headingX * -dx + b.headingY * -dy) / (bMag * dist);
-          if (aheadDot <= -MOUTH.behindCos) behindReach = MOUTH.behindReachBonus * eatMult;
-        }
-        const inContact = dist <= rA + rB + MOUTH.contactMargin + behindReach;
-        // Spawn protection: a freshly (re)spawned player can't be eaten OR nibbled for a window.
+        const inFront = stationary || dot >= MOUTH.coneCos;
+        // Spawn protection: a freshly (re)spawned player can't be eaten OR bitten for a window.
         const protectedB = !!(b.spawnProtectedUntil && now < b.spawnProtectedUntil);
 
         if (canSwallow(a.mass, b.mass)) {
-          // ---- a can swallow b: eating requires FRONT-OF-FACE contact (not any-angle). A moving
-          // fish only eats prey inside its forward mouth cone; a fish with no heading (truly
-          // stationary) still eats on any-angle contact since it has no cone to face with.
-          if (protectedB) continue;
-          const inFrontCone = stationary || dot >= MOUTH.coneCos;
-          let eat = inContact && inFrontCone;
-
-          // Front suction (moving, in-cone): reel not-yet-touching prey toward the mouth point and
-          // eat once it penetrates — lets big (slow) fish vacuum prey in from in front.
-          if (!eat && !stationary && dot >= MOUTH.coneCos) {
-            const mouthOffset = rA + MOUTH.suctionExtraRadius * 0.5 + grab;
-            const mx = a.x + hx * mouthOffset;
-            const my = a.y + hy * mouthOffset;
-            const bite = rA + MOUTH.suctionExtraRadius + grab;
-            const mdx = b.x - mx;
-            const mdy = b.y - my;
-            const mouthDist2 = mdx * mdx + mdy * mdy;
-            if (mouthDist2 <= bite * bite) {
-              if (mouthDist2 <= (bite - rB * 0.5) * (bite - rB * 0.5)) {
-                eat = true; // penetrated the bite zone
-              } else {
-                // Reel prey toward the mouth this tick; the bite resolves a tick or two later.
-                b.x += (mx - b.x) * MOUTH.suctionPullPerTick;
-                b.y += (my - b.y) * MOUTH.suctionPullPerTick;
-              }
+          // ---- a can swallow b: it must FACE b (front cone) and have its mouth on it (gap ≤ eatReach).
+          if (protectedB || !inFront) continue;
+          if (gap > eatReach) {
+            // Not eating yet, but closing in within the bite-animation reach → play the chomp wind-up
+            // (cosmetic only). Pulsed by BITE.cooldownMs so it gnashes rhythmically as it approaches.
+            if (gap <= biteReach && now - (a.lastBiteAnimAt ?? 0) >= BITE.cooldownMs) {
+              a.lastBiteAnimAt = now;
+              a.bitingTick = this.tick;
             }
+            continue;
           }
-
-          if (!eat) continue;
 
           // a swallows b WHOLE: instant mass gain (you grow), but NO instant XP — the kill's XP is
           // burped forward out of the mouth as collectable chunks (burpXp). The corpse is not
@@ -681,7 +676,7 @@ export class World {
           b.alive = false; // marked for removal at end of tick (handled by caller)
           b.eatenWhole = true;
           a.bitingTick = this.tick;
-          this.burpXp(a, b, rA, grab, now);
+          this.burpXp(a, b, rA, now);
           this.swallowEvents.push({ id: b.id, by: a.id });
           // Forward lurch onto the prey (AI eaters; players apply their own lunge client-side).
           if (a.isAi && !stationary) {
@@ -689,9 +684,10 @@ export class World {
             a.vy += hy * BITE.eatLungeImpulse;
           }
         } else if (b.mass > a.mass) {
-          // ---- a is smaller than b: NIBBLE — take a bite out of b for damage = a.level. Does not
-          // eat b; sustained nibble damage feeds b's aggro (if AI) so it eventually turns to chase.
-          if (protectedB || !inContact) continue;
+          // ---- a is smaller than b: NIBBLE — take a bite out of b for damage = a.level. Any angle
+          // (you can gnaw a big fish from behind) but you must be touching it (gap ≤ eatReach). Does
+          // not eat b; sustained nibble damage feeds b's aggro (if AI) so it eventually turns to chase.
+          if (protectedB || gap > eatReach) continue;
           const last = a.lastNibbleAt ?? 0;
           if (now - last < NIBBLE.cooldownMs) continue;
           a.lastNibbleAt = now;
@@ -699,19 +695,18 @@ export class World {
           applyNibble(b, a, dmg);
           a.nibblingTick = this.tick;
           if (b.isAi && b.aiState) addAggro(b.aiState, a.id, dmg * AGGRO.perDamage);
+          this.recordBite(b, a, now);
           // Small dart-in (AI nibblers; players apply their own client-side).
           if (a.isAi && !stationary) {
             a.vx += hx * BITE.lungeImpulse * 0.5;
             a.vy += hy * BITE.lungeImpulse * 0.5;
           }
         } else {
-          // ---- a is bigger than b but NOT by the 1.15× swallow ratio (the "between zone"), or
-          // they're the same size: a can't swallow b, so it takes a light BITE for damage instead.
-          // Front-of-face like eating (you must point your mouth at prey to bite it); repeated bites
-          // soften b until a is 1.15× bigger and the next contact swallows it whole. Uses its OWN
-          // cooldown (lastBiteAt) so it never stomps / is stomped by the nibble cooldown.
-          if (protectedB || !inContact) continue;
-          if (!(stationary || dot >= MOUTH.coneCos)) continue;
+          // ---- a is bigger than b but NOT by the swallow ratio (the "between zone"), or they're the
+          // same size: a can't swallow b, so it takes a light BITE for damage instead. Front-of-face
+          // and mouth-on like eating (gap ≤ eatReach); repeated bites soften b until a is big enough
+          // and the next contact swallows it whole. Uses its OWN cooldown (lastBiteAt).
+          if (protectedB || !inFront || gap > eatReach) continue;
           const last = a.lastBiteAt ?? 0;
           if (now - last < BITE.cooldownMs) continue;
           a.lastBiteAt = now;
@@ -719,6 +714,7 @@ export class World {
           applyNibble(b, a, dmg);
           a.nibblingTick = this.tick;
           if (b.isAi && b.aiState) addAggro(b.aiState, a.id, dmg * AGGRO.perDamage);
+          this.recordBite(b, a, now);
           // Forward lurch into the bite (AI eaters; players apply their own client-side).
           if (a.isAi && !stationary) {
             a.vx += hx * BITE.lungeImpulse;
