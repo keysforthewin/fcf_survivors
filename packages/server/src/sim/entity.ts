@@ -120,6 +120,10 @@ export interface Fish {
    *  the SAME attacker counts as a fresh engagement. Per-attacker (not a single slot) so two fish
    *  ganging up don't each read as "fresh" every alternating bite. Pruned to the engagement window. */
   biteToastAt?: Map<number, number>;
+  /** Per-victim wall-time of the last "You hit X" toast THIS (human) fish emitted as the attacker,
+   *  keyed by victim id. Mirror of biteToastAt for the aggressor side — gates the personal "hit"
+   *  toast to once per engagement. Pruned to the engagement window. */
+  hitToastAt?: Map<number, number>;
   /** Server tick on which this fish last took a quick BITE — either nibbling a bigger fish, or
    *  biting prey it's bigger than but can't yet swallow → transient `nibbling` flag (quick nip anim). */
   nibblingTick?: number;
@@ -195,13 +199,20 @@ export interface Fish {
    */
   banishedSubjects: Set<string>;
   /**
-   * Set when a weapon lands the lethal hit (mass drained to zero), so the death
-   * handler can credit the shooter instead of the 250-unit proximity heuristic —
-   * which misses ranged kills (ESP/aliens). `undefined` ⇒ died by eating or the
-   * void. Set just before removal; never reset (fish are fresh objects per life).
+   * Set when a kill is explicitly attributed (weapon hit, melee nibble/bite, OR swallow) so the
+   * death handler credits the exact killer instead of the 250-unit proximity heuristic — which
+   * misses ranged kills (ESP/aliens). `undefined` ⇒ no explicit killer (e.g. starvation/decay or
+   * the void) → proximity fallback. Set just before removal; never reset (fresh object per life).
    */
   killedByName?: string;
   killedByMass?: number;
+  /** Fish id of the explicit killer (paired with killedByName). Lets the death handler resolve the
+   *  killer's socket for the personal "You killed/ate X" toast and to exclude them from the global
+   *  death line. `undefined` ⇒ no explicit killer. */
+  killedById?: number;
+  /** Set only when a WEAPON landed the lethal hit. Presence distinguishes a weapon kill ("killed
+   *  with <weapon>") from a swallow/melee kill ("eaten by"). `undefined` ⇒ not a weapon kill. */
+  killedByWeaponId?: WeaponId;
 }
 
 export interface AiState {
