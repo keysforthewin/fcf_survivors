@@ -114,11 +114,11 @@ export async function installMockWebSocket(page: Page): Promise<void> {
     __test.playerJoined = (name: string, color = "#7fcfff"): void => {
       __test.emitAll({ t: "playerJoined", name, color });
     };
-    __test.playerDied = (name: string, byName = "the void", color = "#7fcfff"): void => {
-      __test.emitAll({ t: "playerDied", name, color, byName });
+    __test.playerDied = (name: string, byName = "the void", color = "#7fcfff", weaponId?: string): void => {
+      __test.emitAll({ t: "playerDied", name, color, byName, ...(weaponId ? { weaponId } : {}) });
     };
-    __test.playerBitten = (name: string, byName: string, color = "#7fcfff"): void => {
-      __test.emitAll({ t: "playerBitten", name, color, byName });
+    __test.combatToast = (kind: string, other: string, weaponId?: string, color = "#7fcfff"): void => {
+      __test.emitAll({ t: "combatToast", kind, other, color, ...(weaponId ? { weaponId } : {}) });
     };
     __test.roster = (players: any[] = []): void => {
       __test.emitAll({ t: "roster", players });

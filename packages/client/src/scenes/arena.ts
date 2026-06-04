@@ -467,13 +467,21 @@ export class ArenaScene {
       this.toastHud.show(`${msg.name} joined`, msg.color);
     });
     this.net.on("playerDied", (msg) => {
-      const text = msg.byName === "the void"
-        ? `${msg.name} left`
-        : `${msg.name} was eaten by ${msg.byName}`;
+      let text: string;
+      if (msg.byName === "the void") text = `${msg.name} left`;
+      else if (msg.weaponId) text = `${msg.name} was killed by ${msg.byName} with ${WEAPONS[msg.weaponId].name}`;
+      else text = `${msg.name} was eaten by ${msg.byName}`;
       this.toastHud.show(text, msg.color);
     });
-    this.net.on("playerBitten", (msg) => {
-      this.toastHud.show(`${msg.name} was bitten by ${msg.byName}`, msg.color);
+    this.net.on("combatToast", (msg) => {
+      let text: string;
+      switch (msg.kind) {
+        case "hit": text = `You hit ${msg.other}`; break;
+        case "ate": text = `You ate ${msg.other}`; break;
+        case "kill": text = msg.weaponId ? `You killed ${msg.other} with ${WEAPONS[msg.weaponId].name}` : `You killed ${msg.other}`; break;
+        case "bitten": text = `You were bitten by ${msg.other}`; break;
+      }
+      this.toastHud.show(text, msg.color);
     });
     this.net.on("roster", (msg) => this.rosterHud.update(msg.players));
   }
@@ -769,15 +777,9 @@ export class ArenaScene {
     // Fish swallowed whole this tick: hand the victim's sprite to the suck-in animation BEFORE the
     // removed loop, so the matching `removed` entry is a no-op (the swallow owns the teardown).
     if (msg.swallowed && msg.swallowed.length > 0) {
-      for (const s of msg.swallowed) {
-        // "Ate X" toast when WE swallowed an AI fish. Human victims are already covered by the
-        // broadcast playerDied "X was eaten by <me>" toast, so don't double up on those.
-        if (s.by === this.selfId) {
-          const victim = this.fishes.get(s.id);
-          if (victim && victim.isAi) this.toastHud.show(`Ate ${victim.name}`, victim.color);
-        }
-        this.beginSwallow(s.id, s.by);
-      }
+      // The "You ate X" toast is now server-authoritative (combatToast); this only drives the
+      // suck-in animation handing the victim's sprite to the eater before the `removed` teardown.
+      for (const s of msg.swallowed) this.beginSwallow(s.id, s.by);
     }
 
     for (const id of msg.removed) {

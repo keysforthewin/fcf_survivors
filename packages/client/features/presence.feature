@@ -17,15 +17,21 @@ Feature: Presence HUD — toasts and roster
     Then a toast containing "Bob" is visible
     And a toast containing "eaten by Charlie" is visible
 
-  Scenario: A playerBitten message shows a toast with the attacker
-    When the server sends a playerBitten for "Bob" by "Charlie"
-    Then a toast containing "Bob" is visible
-    And a toast containing "was bitten by Charlie" is visible
+  Scenario: A combatToast "bitten" shows a second-person warning
+    When the server sends a combatToast "bitten" for "Charlie"
+    Then a toast containing "You were bitten by Charlie" is visible
 
-  Scenario: Swallowing an AI fish shows an "Ate" toast
-    When an AI fish "Snacky" with id 2 is on screen
-    And the server reports I swallowed fish id 2
-    Then a toast containing "Ate Snacky" is visible
+  Scenario: A combatToast "ate" shows a second-person toast
+    When the server sends a combatToast "ate" for "Snacky"
+    Then a toast containing "You ate Snacky" is visible
+
+  Scenario: A combatToast "kill" names the weapon
+    When the server sends a combatToast "kill" for "Charlie" with weapon "bubble"
+    Then a toast containing "You killed Charlie with AK-47" is visible
+
+  Scenario: A weapon kill shows the weapon in the global death feed
+    When the server sends a playerDied for "Bob" killed by "Charlie" with weapon "bubble"
+    Then a toast containing "Bob was killed by Charlie with AK-47" is visible
 
   Scenario: Roster panel lists alive humans with self highlighted
     When the server sends a roster with entries:

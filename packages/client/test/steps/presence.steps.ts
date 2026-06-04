@@ -24,13 +24,37 @@ When(
 );
 
 When(
-  "the server sends a playerBitten for {string} by {string}",
-  async ({ page }, name: string, byName: string) => {
+  "the server sends a combatToast {string} for {string}",
+  async ({ page }, kind: string, other: string) => {
     await page.evaluate(
-      ([n, by]: string[]) => {
-        (window as any).__test.playerBitten(n, by);
+      ([k, o]: string[]) => {
+        (window as any).__test.combatToast(k, o);
       },
-      [name, byName]
+      [kind, other]
+    );
+  }
+);
+
+When(
+  "the server sends a combatToast {string} for {string} with weapon {string}",
+  async ({ page }, kind: string, other: string, weaponId: string) => {
+    await page.evaluate(
+      ([k, o, w]: string[]) => {
+        (window as any).__test.combatToast(k, o, w);
+      },
+      [kind, other, weaponId]
+    );
+  }
+);
+
+When(
+  "the server sends a playerDied for {string} killed by {string} with weapon {string}",
+  async ({ page }, name: string, byName: string, weaponId: string) => {
+    await page.evaluate(
+      ([n, by, w]: string[]) => {
+        (window as any).__test.playerDied(n, by, undefined, w);
+      },
+      [name, byName, weaponId]
     );
   }
 );
