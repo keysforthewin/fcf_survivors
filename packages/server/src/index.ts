@@ -270,6 +270,10 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
 
     // fishId → socket for this tick (alive players only). Killers are alive, so this resolves them
     // for the personal "You ate/killed X" toast and to exclude them from their own kill's death line.
+    // Built BEFORE the deadPlayers loop below (which nulls ws.data.fishId for anyone who died this
+    // tick), so the personal-toast dispatch's `ws.data.fishId === recipientId` re-check rejects a
+    // just-killed recipient — their death is covered by playerDied, not a stale combatToast. Do not
+    // move this build after that loop without revisiting that guard.
     const wsByFish = new Map<number, Bun.ServerWebSocket<SocketData>>();
     for (const s of sockets.values()) if (s.data.fishId !== null) wsByFish.set(s.data.fishId, s);
 
