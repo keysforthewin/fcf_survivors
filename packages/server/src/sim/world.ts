@@ -36,9 +36,10 @@ export class World {
   zapEvents: ZapEventRecord[] = [];
   /** Fish swallowed whole this tick: { victim id, eater id }. Drives the client suck-in anim. Drained by snapshot builder. */
   swallowEvents: Array<{ id: number; by: number }> = [];
-  /** Human players BITTEN this tick (new engagement, throttled per BITE.toastEngagementMs):
-   *  { victim id, attacker id }. Drained by the tick loop → "bitten" toast broadcast. */
-  bittenEvents: Array<{ id: number; by: number }> = [];
+  /** Personal melee combat toasts queued this tick: "hit" goes to the attacker ("You hit X"),
+   *  "bitten" goes to the victim ("You were bitten by X"). Names are captured at enqueue time so a
+   *  fish removed later this tick still resolves. Drained by the tick loop → per-socket combatToast. */
+  combatEvents: Array<{ recipientId: number; kind: "hit" | "bitten"; otherName: string; otherColor: string }> = [];
 
   private idCounter = 1;
   tick = 0;
@@ -348,19 +349,38 @@ export class World {
   }
 
   /**
-   * Record a bite taken by `victim` from `attacker`. When `victim` is a human player it enqueues a
-   * "bitten" toast event — but only once per engagement: a different attacker, or no bite from the
-   * same attacker for BITE.toastEngagementMs, counts as a fresh engagement. AI victims are silent.
+   * Once-per-engagement gate for a combat toast between two fish. Records `now` for `otherId`,
+   * prunes stale entries, and returns whether this contact starts a FRESH engagement (no contact
+   * from the same pair within BITE.toastEngagementMs).
    */
-  private recordBite(victim: Fish, attacker: Fish, now: number): void {
-    if (victim.isAi) return;
-    let seen = victim.biteToastAt;
-    if (!seen) { seen = new Map(); victim.biteToastAt = seen; }
-    const fresh = now - (seen.get(attacker.id) ?? -Infinity) > BITE.toastEngagementMs;
-    seen.set(attacker.id, now);
-    if (fresh) this.bittenEvents.push({ id: victim.id, by: attacker.id });
-    // Bound the map: forget attackers we haven't seen within the engagement window.
-    for (const [aid, t] of seen) if (now - t > BITE.toastEngagementMs) seen.delete(aid);
+  private freshEngagement(seen: Map<number, number>, otherId: number, now: number): boolean {
+    const fresh = now - (seen.get(otherId) ?? -Infinity) > BITE.toastEngagementMs;
+    seen.set(otherId, now);
+    for (const [k, t] of seen) if (now - t > BITE.toastEngagementMs) seen.delete(k);
+    return fresh;
+  }
+
+  /**
+   * Record a melee bite/nibble from `attacker` on `victim`. Enqueues up to two PERSONAL combat
+   * toasts, capturing names now (so a fish removed later this tick still resolves):
+   *   • attacker-side "You hit X" — human attacker, victim survived the blow, once per engagement.
+   *   • victim-side "You were bitten by X" — human victim, only when `attackerIsThreat` (a bigger
+   *     between-zone biter), victim survived, once per engagement. A smaller fish nibbling its
+   *     predator is NOT a threat, so eating prey never tells the eater it was bitten.
+   */
+  private recordMeleeBite(victim: Fish, attacker: Fish, attackerIsThreat: boolean, now: number): void {
+    if (!attacker.isAi && victim.alive) {
+      const seen = (attacker.hitToastAt ??= new Map());
+      if (this.freshEngagement(seen, victim.id, now)) {
+        this.combatEvents.push({ recipientId: attacker.id, kind: "hit", otherName: victim.name, otherColor: victim.color });
+      }
+    }
+    if (!victim.isAi && attackerIsThreat && victim.alive) {
+      const seen = (victim.biteToastAt ??= new Map());
+      if (this.freshEngagement(seen, attacker.id, now)) {
+        this.combatEvents.push({ recipientId: victim.id, kind: "bitten", otherName: attacker.name, otherColor: attacker.color });
+      }
+    }
   }
 
   /**
@@ -675,6 +695,8 @@ export class World {
           a.kills += 1;
           b.alive = false; // marked for removal at end of tick (handled by caller)
           b.killedById = a.id; // swallow counts as a kill (no weapon)
+          b.killedByName = a.name;
+          b.killedByMass = a.mass;
           b.eatenWhole = true;
           a.bitingTick = this.tick;
           this.burpXp(a, b, rA, now);
@@ -696,7 +718,7 @@ export class World {
           applyNibble(b, a, dmg);
           a.nibblingTick = this.tick;
           if (b.isAi && b.aiState) addAggro(b.aiState, a.id, dmg * AGGRO.perDamage);
-          this.recordBite(b, a, now);
+          this.recordMeleeBite(b, a, false, now);
           // Small dart-in (AI nibblers; players apply their own client-side).
           if (a.isAi && !stationary) {
             a.vx += hx * BITE.lungeImpulse * 0.5;
@@ -715,7 +737,7 @@ export class World {
           applyNibble(b, a, dmg);
           a.nibblingTick = this.tick;
           if (b.isAi && b.aiState) addAggro(b.aiState, a.id, dmg * AGGRO.perDamage);
-          this.recordBite(b, a, now);
+          this.recordMeleeBite(b, a, true, now);
           // Forward lurch into the bite (AI eaters; players apply their own client-side).
           if (a.isAi && !stationary) {
             a.vx += hx * BITE.lungeImpulse;

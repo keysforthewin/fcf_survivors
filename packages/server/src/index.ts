@@ -1,4 +1,4 @@
-import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type PlayerBittenMsg, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
+import { ClientMsg, type ServerMsg, type EatenMsg, type LeaderboardMsg, type LevelUpMsg, type PlayerJoinedMsg, type PlayerDiedMsg, type CombatToastMsg, type WeaponId, type RosterEntry, type RosterMsg, parseCardId } from "@fcf/shared";
 import { ARENA, TICK, DEFAULT_SPECIES_ID, isSpeciesId } from "@fcf/shared";
 import { applyClientWeaponHit } from "./sim/weapon.ts";
 import { World, type WorldDeps } from "./sim/world.ts";
@@ -91,9 +91,13 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     } catch {}
   }
 
-  function broadcast(msg: ServerMsg, exclude?: Bun.ServerWebSocket<SocketData>): void {
+  function broadcast(
+    msg: ServerMsg,
+    exclude?: Bun.ServerWebSocket<SocketData> | Set<Bun.ServerWebSocket<SocketData>>,
+  ): void {
+    const excludeSet = exclude instanceof Set ? exclude : undefined;
     for (const ws of sockets.values()) {
-      if (ws === exclude) continue;
+      if (excludeSet ? excludeSet.has(ws) : ws === exclude) continue;
       send(ws, msg);
     }
   }
@@ -178,16 +182,30 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       spawnedAt: number;
       killerName: string;
       killerMass: number;
+      killerId?: number;
+      weaponId?: WeaponId;
       weapons: Array<{ id: string; level: number }>;
       passives: Array<{ id: string; stack: number }>;
       evolution: string | null;
     }
     const deadPlayers: DeadPlayer[] = [];
     const allDead: Array<{ x: number; y: number; mass: number; color: string; level: number; eatenWhole: boolean }> = [];
+    // Personal "you ate/killed X" toasts for the (human) killer of any dead fish — AI victims too.
+    const killToasts: Array<{ killerId: number; kind: "ate" | "kill"; other: string; color: string; weaponId?: WeaponId }> = [];
 
     for (const f of world.fish.values()) {
       if (f.alive) continue;
       allDead.push({ x: f.x, y: f.y, mass: f.mass, color: f.color, level: f.level, eatenWhole: !!f.eatenWhole });
+      if (f.killedById !== undefined) {
+        // eatenWhole ⇒ "You ate X"; a recorded weapon ⇒ "You killed X with <weapon>"; else "You killed X".
+        killToasts.push({
+          killerId: f.killedById,
+          kind: f.eatenWhole ? "ate" : "kill",
+          other: f.name,
+          color: f.color,
+          weaponId: f.killedByWeaponId,
+        });
+      }
       if (!f.isAi && f.socketId) {
         // Disconnects don't credit a nearby fish; the toast on other clients
         // keys "left" off byName === "the void". This also closes the
@@ -229,6 +247,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
           spawnedAt: f.spawnedAt,
           killerName: killer?.name ?? "the void",
           killerMass: killer?.mass ?? 0,
+          killerId: f.killedById,
+          weaponId: f.killedByWeaponId,
           weapons: f.weapons.map((s) => ({ id: s.id, level: s.level })),
           passives: [...f.passives.entries()].map(([id, stack]) => ({ id, stack })),
           evolution,
@@ -248,6 +268,11 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       if (!f.alive) world.removeFish(id);
     }
 
+    // fishId → socket for this tick (alive players only). Killers are alive, so this resolves them
+    // for the personal "You ate/killed X" toast and to exclude them from their own kill's death line.
+    const wsByFish = new Map<number, Bun.ServerWebSocket<SocketData>>();
+    for (const s of sockets.values()) if (s.data.fishId !== null) wsByFish.set(s.data.fishId, s);
+
     // notify dead players + persist score
     for (const dp of deadPlayers) {
       const ws = [...sockets.values()].find((s) => s.data.fishId === dp.fishId);
@@ -256,9 +281,21 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
 
       // Broadcast playerDied to everyone except the dying socket (or to everyone
       // if the socket is already gone — disconnect case).
+      // The killer (if a connected human) gets the personal "You killed/ate X" toast instead of the
+      // third-person death line, so exclude them here as well as the dying socket.
+      const killerWs = dp.killerId !== undefined ? wsByFish.get(dp.killerId) : undefined;
+      const deathExclude = new Set<Bun.ServerWebSocket<SocketData>>();
+      if (ws) deathExclude.add(ws);
+      if (killerWs) deathExclude.add(killerWs);
       broadcast(
-        { t: "playerDied", name: dp.name, color: dp.color, byName: dp.killerName } satisfies PlayerDiedMsg,
-        ws,
+        {
+          t: "playerDied",
+          name: dp.name,
+          color: dp.color,
+          byName: dp.killerName,
+          ...(dp.weaponId !== undefined ? { weaponId: dp.weaponId } : {}),
+        } satisfies PlayerDiedMsg,
+        deathExclude,
       );
       broadcastRoster();
 
@@ -315,18 +352,33 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
       else broadcastLeaderboard().catch(() => {});
     }
 
-    // "Bitten" toasts: a human player took a bite this tick (new engagement). Broadcast to everyone
-    // (including the victim — they're alive, unlike a death). Skip any victim already removed this
-    // tick (a bite that killed them is covered by playerDied). The attacker may be an AI fish.
-    for (const ev of world.bittenEvents) {
-      const victim = world.fish.get(ev.id);
-      if (!victim) continue;
-      const attacker = world.fish.get(ev.by);
-      broadcast(
-        { t: "playerBitten", name: victim.name, color: victim.color, byName: attacker?.name ?? "the void" } satisfies PlayerBittenMsg,
-      );
+    // Personal kill/ate toasts to each (alive, human) killer.
+    for (const kt of killToasts) {
+      const kws = wsByFish.get(kt.killerId);
+      if (!kws || kws.data.fishId !== kt.killerId) continue;
+      send(kws, {
+        t: "combatToast",
+        kind: kt.kind,
+        other: kt.other,
+        color: kt.color,
+        ...(kt.weaponId !== undefined ? { weaponId: kt.weaponId } : {}),
+      } satisfies CombatToastMsg);
     }
-    world.bittenEvents.length = 0;
+
+    // Personal melee combat toasts: "You hit X" (attacker) / "You were bitten by X" (victim warning
+    // from a genuine threat). Sent only to the player they're about; a recipient that died this tick
+    // has a null fishId now and is skipped (their death is covered by playerDied).
+    for (const ev of world.combatEvents) {
+      const cws = wsByFish.get(ev.recipientId);
+      if (!cws || cws.data.fishId !== ev.recipientId) continue;
+      send(cws, {
+        t: "combatToast",
+        kind: ev.kind,
+        other: ev.otherName,
+        color: ev.otherColor,
+      } satisfies CombatToastMsg);
+    }
+    world.combatEvents.length = 0;
 
     // level up handling — extracted so tests and prod use the same code path
     processLevelUps(world);

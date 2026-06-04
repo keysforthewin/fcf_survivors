@@ -1,5 +1,6 @@
 import { Then, When } from "@cucumber/cucumber";
 import { strict as assert } from "node:assert";
+import type { WeaponId } from "@fcf/shared";
 import { TestWorld } from "../support/world.ts";
 
 Then(
@@ -71,6 +72,54 @@ When(
     assert.ok(fish, `Fish ${fishId} for client "${label}" not in world`);
     fish.alive = false;
   }
+);
+
+When(
+  "the fish for client {string} is killed by client {string} with weapon {string}",
+  function (this: TestWorld, victimLabel: string, killerLabel: string, weaponId: string) {
+    const server = this.requireServer();
+    const victimId = this.data.get(`${victimLabel}.selfId`) as number | undefined;
+    const killerId = this.data.get(`${killerLabel}.selfId`) as number | undefined;
+    assert.ok(victimId != null && killerId != null, `Missing selfId for ${victimLabel}/${killerLabel}`);
+    const victim = server.running.world.fish.get(victimId!);
+    const killer = server.running.world.fish.get(killerId!);
+    assert.ok(victim && killer, `victim/killer fish not in world`);
+    victim!.killedById = killerId!;
+    victim!.killedByName = killer!.name;
+    victim!.killedByMass = killer!.mass;
+    victim!.killedByWeaponId = weaponId as WeaponId;
+    victim!.alive = false;
+  },
+);
+
+Then(
+  "client {string} receives a playerDied for {string} with weapon {string}",
+  { timeout: 5_000 },
+  async function (this: TestWorld, label: string, name: string, weaponId: string) {
+    const c = this.requireClient(label);
+    const msg = await c.wait((m) => m.t === "playerDied" && m.name === name);
+    assert.equal((msg as any).weaponId, weaponId, `Expected playerDied.weaponId=${weaponId}, got ${(msg as any).weaponId}`);
+  },
+);
+
+Then(
+  "client {string} does not receive a playerDied for {string} within {int}ms",
+  async function (this: TestWorld, label: string, name: string, ms: number) {
+    const c = this.requireClient(label);
+    let saw = false;
+    try { await c.wait((m) => m.t === "playerDied" && m.name === name, ms); saw = true; } catch {}
+    assert.ok(!saw, `Did not expect a playerDied for ${name} but one arrived`);
+  },
+);
+
+Then(
+  "client {string} receives a combatToast {string} for {string} with weapon {string}",
+  { timeout: 5_000 },
+  async function (this: TestWorld, label: string, kind: string, other: string, weaponId: string) {
+    const c = this.requireClient(label);
+    const msg = await c.wait((m) => m.t === "combatToast" && (m as any).kind === kind && (m as any).other === other);
+    assert.equal((msg as any).weaponId, weaponId, `Expected combatToast.weaponId=${weaponId}, got ${(msg as any).weaponId}`);
+  },
 );
 
 Then(

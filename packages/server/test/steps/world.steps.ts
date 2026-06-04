@@ -389,8 +389,11 @@ Then(
     const vid = sim.byName.get(victim);
     const aid = sim.byName.get(attacker);
     assert.ok(vid != null && aid != null, `Unknown fish in bite-toast assertion (${victim}/${attacker})`);
-    const found = sim.world.bittenEvents.some((e) => e.id === vid && e.by === aid);
-    assert.ok(found, `Expected a bite toast for ${victim} by ${attacker}; got ${JSON.stringify(sim.world.bittenEvents)}`);
+    const att = sim.world.fish.get(aid!);
+    const found = sim.world.combatEvents.some(
+      (e) => e.kind === "bitten" && e.recipientId === vid && e.otherName === att?.name,
+    );
+    assert.ok(found, `Expected a "bitten" toast for ${victim} by ${attacker}; got ${JSON.stringify(sim.world.combatEvents)}`);
   },
 );
 
@@ -399,8 +402,43 @@ Then(
   function (this: TestWorld, count: number, victim: string) {
     const sim = this.requireSim();
     const vid = sim.byName.get(victim);
-    const n = sim.world.bittenEvents.filter((e) => e.id === vid).length;
-    assert.equal(n, count, `Expected ${count} bite toasts for ${victim}, got ${n}`);
+    const n = sim.world.combatEvents.filter((e) => e.kind === "bitten" && e.recipientId === vid).length;
+    assert.equal(n, count, `Expected ${count} bitten toasts for ${victim}, got ${n}`);
+  },
+);
+
+Then(
+  "a hit toast was emitted for {string} hitting {string}",
+  function (this: TestWorld, attacker: string, victim: string) {
+    const sim = this.requireSim();
+    const aid = sim.byName.get(attacker);
+    const vid = sim.byName.get(victim);
+    assert.ok(aid != null && vid != null, `Unknown fish in hit-toast assertion (${attacker}/${victim})`);
+    const vic = sim.world.fish.get(vid!);
+    const found = sim.world.combatEvents.some(
+      (e) => e.kind === "hit" && e.recipientId === aid && e.otherName === vic?.name,
+    );
+    assert.ok(found, `Expected a "hit" toast for ${attacker} hitting ${victim}; got ${JSON.stringify(sim.world.combatEvents)}`);
+  },
+);
+
+Then(
+  "there are {int} hit toasts for {string}",
+  function (this: TestWorld, count: number, attacker: string) {
+    const sim = this.requireSim();
+    const aid = sim.byName.get(attacker);
+    const n = sim.world.combatEvents.filter((e) => e.kind === "hit" && e.recipientId === aid).length;
+    assert.equal(n, count, `Expected ${count} hit toasts for ${attacker}, got ${n}`);
+  },
+);
+
+Then(
+  "{string} was swallowed whole",
+  function (this: TestWorld, victim: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const v = vid != null ? sim.world.fish.get(vid) : undefined;
+    assert.ok(v && v.eatenWhole === true && v.alive === false, `Expected ${victim} swallowed whole; got ${JSON.stringify(v && { alive: v.alive, eatenWhole: v.eatenWhole })}`);
   },
 );
 
