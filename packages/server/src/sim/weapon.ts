@@ -94,6 +94,8 @@ function applyHit(world: World, target: Fish, owner: Fish, damage: number, weapo
     target.alive = false;
     target.killedByName = owner.name;
     target.killedByMass = owner.mass;
+    target.killedById = owner.id;
+    target.killedByWeaponId = weaponId;
     if (!owner.isAi) {
       // Kill COUNT only — no automatic XP. The victim's XP scatters as collectable balls at the
       // corpse (see World.spawnDeathDrops); the killer earns it by swimming over to pick it up, the
@@ -126,6 +128,7 @@ export function applyNibble(target: Fish, attacker: Fish, damage: number): void 
     target.alive = false;
     target.killedByName = attacker.name;
     target.killedByMass = attacker.mass;
+    target.killedById = attacker.id;
     if (!attacker.isAi) {
       // Kill COUNT only — no automatic XP (the victim's XP drops as collectable balls). See applyHit.
       attacker.kills += 1;

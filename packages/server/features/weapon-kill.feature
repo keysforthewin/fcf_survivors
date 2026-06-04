@@ -33,3 +33,24 @@ Feature: Weapons can kill
     When the world advances 50 ticks
     Then "Victim" is alive
     And "Victim" has at most mass 6
+
+  Scenario: A weapon kill records the shooter id and the weapon
+    Given a player "Sniper" at (4000, 4000) with mass 50
+    And "Sniper" has weapon "pulse" at level 5
+    And a player "Victim" at (4000, 4300) with mass 10
+    When the world advances 200 ticks
+    Then "Victim" is dead
+    And "Victim" was killed by "Sniper"
+    And "Victim" has killedByWeaponId "pulse"
+
+  Scenario: A melee kill records the killer but no weapon
+    # Biter (11) bites Beta (10). Between-zone bites via applyNibble reduce Beta's mass;
+    # once Beta is small enough Biter swallows the rest. Either way killedById is set
+    # (applyNibble for the lethal hit, or the swallow path), and killedByWeaponId stays unset.
+    Given a player "Biter" at (1000, 1000) with mass 11
+    And "Biter" has heading (1, 0)
+    And a player "Beta" at (1015, 1000) with mass 10
+    When the world advances 400 ticks
+    Then "Beta" is dead
+    And "Beta" was killed by "Biter"
+    And "Beta" has no killedByWeaponId

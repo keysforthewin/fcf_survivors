@@ -674,6 +674,7 @@ export class World {
           a.mass = Math.min(a.mass, massCapFor(a.isAi));
           a.kills += 1;
           b.alive = false; // marked for removal at end of tick (handled by caller)
+          b.killedById = a.id; // swallow counts as a kill (no weapon)
           b.eatenWhole = true;
           a.bitingTick = this.tick;
           this.burpXp(a, b, rA, now);

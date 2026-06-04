@@ -404,6 +404,38 @@ Then(
   },
 );
 
+Then(
+  "{string} was killed by {string}",
+  function (this: TestWorld, victim: string, killer: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const kid = sim.byName.get(killer);
+    assert.ok(vid != null && kid != null, `Unknown fish in kill assertion (${victim}/${killer})`);
+    const v = sim.world.fish.get(vid!);
+    assert.equal(v?.killedById, kid, `Expected ${victim}.killedById=${killer}'s id (${kid}), got ${v?.killedById}`);
+  },
+);
+
+Then(
+  "{string} has killedByWeaponId {string}",
+  function (this: TestWorld, victim: string, weaponId: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const v = vid != null ? sim.world.fish.get(vid) : undefined;
+    assert.equal(v?.killedByWeaponId, weaponId, `Expected ${victim}.killedByWeaponId=${weaponId}, got ${v?.killedByWeaponId}`);
+  },
+);
+
+Then(
+  "{string} has no killedByWeaponId",
+  function (this: TestWorld, victim: string) {
+    const sim = this.requireSim();
+    const vid = sim.byName.get(victim);
+    const v = vid != null ? sim.world.fish.get(vid) : undefined;
+    assert.equal(v?.killedByWeaponId, undefined, `Expected ${victim}.killedByWeaponId undefined, got ${v?.killedByWeaponId}`);
+  },
+);
+
 Then("{string} has been removed from the world", function (this: TestWorld, name: string) {
   const sim = this.requireSim();
   const id = sim.byName.get(name);
