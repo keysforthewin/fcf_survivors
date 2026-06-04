@@ -552,22 +552,23 @@ The **between-zone bite** branch currently calls `this.recordBite(b, a, now);` (
           this.recordMeleeBite(b, a, true, now);
 ```
 
-In the **swallow** block (lines 676-680), add the explicit attribution. Replace:
+In the **swallow** block, add the rest of the explicit attribution. Task 3 already added `b.killedById = a.id;` here, so the block currently reads:
 
 ```typescript
           b.alive = false; // marked for removal at end of tick (handled by caller)
+          b.killedById = a.id; // swallow counts as a kill (no weapon)
           b.eatenWhole = true;
           a.bitingTick = this.tick;
 ```
 
-with:
+Add `killedByName`/`killedByMass` next to the existing `killedById` line so the death handler's `killedByName !== undefined` branch credits the EXACT eater (instead of the 250px proximity guess). Result:
 
 ```typescript
           b.alive = false; // marked for removal at end of tick (handled by caller)
-          b.eatenWhole = true;
-          b.killedById = a.id;
+          b.killedById = a.id; // swallow counts as a kill (no weapon)
           b.killedByName = a.name;
           b.killedByMass = a.mass;
+          b.eatenWhole = true;
           a.bitingTick = this.tick;
 ```
 
