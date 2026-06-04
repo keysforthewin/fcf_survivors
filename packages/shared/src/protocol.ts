@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { WeaponId } from "./weapons.js";
 
 export const HelloMsg = z.object({
   t: z.literal("hello"),
@@ -352,8 +353,24 @@ export interface PlayerDiedMsg {
   t: "playerDied";
   name: string;
   color: string;
-  /** Name of the eater. "the void" when no killer was nearby (e.g. disconnect or solo death). */
+  /** Name of the killer. "the void" when no killer was attributed (e.g. disconnect or solo death). */
   byName: string;
+  /** Set when a weapon landed the lethal hit → "killed by <byName> with <weapon>". Absent ⇒ "eaten by". */
+  weaponId?: WeaponId;
+}
+
+/**
+ * Personal (second-person) combat feed, sent ONLY to the player it is about — never broadcast.
+ * Drives toasts: "You hit X" / "You ate X" / "You killed X with <weapon>" / "You were bitten by X".
+ * `other` is the other fish's name; `color` accents the toast with their color; `weaponId` is set
+ * only for a weapon kill (kind "kill").
+ */
+export interface CombatToastMsg {
+  t: "combatToast";
+  kind: "hit" | "ate" | "kill" | "bitten";
+  other: string;
+  color?: string;
+  weaponId?: WeaponId;
 }
 
 /**
@@ -392,4 +409,5 @@ export type ServerMsg =
   | PlayerJoinedMsg
   | PlayerDiedMsg
   | PlayerBittenMsg
+  | CombatToastMsg
   | RosterMsg;
