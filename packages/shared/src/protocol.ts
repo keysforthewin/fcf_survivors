@@ -373,19 +373,6 @@ export interface CombatToastMsg {
   weaponId?: WeaponId;
 }
 
-/**
- * Broadcast when a human player TAKES a bite (nibble or between-zone chip damage) — not a kill.
- * Fires once per attacker→victim engagement (see BITE.toastEngagementMs) so a sustained chew
- * doesn't spam. Drives a "‹name› was bitten by ‹byName›" toast. `name`/`color` are the victim;
- * `byName` is the attacker (which may be an AI fish).
- */
-export interface PlayerBittenMsg {
-  t: "playerBitten";
-  name: string;
-  color: string;
-  byName: string;
-}
-
 export interface RosterEntry {
   name: string;
   color: string;
@@ -408,6 +395,5 @@ export type ServerMsg =
   | LeaderboardMsg
   | PlayerJoinedMsg
   | PlayerDiedMsg
-  | PlayerBittenMsg
   | CombatToastMsg
   | RosterMsg;
