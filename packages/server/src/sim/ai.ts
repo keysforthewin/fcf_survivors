@@ -12,7 +12,7 @@ export function addAggro(state: AiState, attackerId: EntityId, amount: number): 
   if (!state.aggro) state.aggro = new Map();
   state.aggro.set(attackerId, Math.min(AGGRO.maxMeter, (state.aggro.get(attackerId) ?? 0) + amount));
 }
-import { NPC_NAMES } from "./npc-names.ts";
+import { NPC_NAMES, GUARANTEED_NPC_NAMES } from "./npc-names.ts";
 
 /** AI fish name pool. Edit the list in `npc-names.ts`. */
 export const AI_NAMES = NPC_NAMES;
@@ -33,6 +33,11 @@ function pick<T>(arr: readonly T[], rng: () => number): T {
  * (`Bloop-2`, `Bloop-3`, ...) so the result is always unique.
  */
 export function pickAiName(rng: () => number, taken: ReadonlySet<string>): string {
+  // Guaranteed names are claimed first so every game keeps its Meesh: the first
+  // AI spawn grabs it and each respawn reclaims it once the holder dies. If a
+  // human already holds it, it's in `taken` and we fall through (humans win).
+  const guaranteed = GUARANTEED_NPC_NAMES.find((n) => !taken.has(n));
+  if (guaranteed) return guaranteed;
   const free = AI_NAMES.filter((n) => !taken.has(n));
   if (free.length > 0) return pick(free, rng);
   const base = pick(AI_NAMES, rng);

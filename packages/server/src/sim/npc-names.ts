@@ -90,3 +90,12 @@ export const NPC_NAMES = [
   "SouthAfi",
   "Bronze Leopard",
 ] as const;
+
+/**
+ * Names that must always be present while any AI fish exists. `pickAiName`
+ * claims a free guaranteed name before any random pick, so the first AI spawn
+ * grabs it and every respawn reclaims it once the holder dies. Humans still win
+ * a collision (the name lands in `taken`), so the game keeps its Meesh either
+ * way. Each entry must also appear in NPC_NAMES above.
+ */
+export const GUARANTEED_NPC_NAMES = ["meesh"] as const;
