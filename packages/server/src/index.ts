@@ -43,6 +43,13 @@ export interface StartServerOpts {
   connectMongo?: boolean;
   /** Verbose logs. Defaults true; tests pass false. */
   log?: boolean;
+  /**
+   * How many consecutive zero-socket ticks the game loop runs before pausing
+   * itself (the drain lets a final disconnect's death/score processing land).
+   * The loop resumes on the next websocket open. Default 100 (~5s at 20Hz);
+   * tests pass a small value to exercise the pause quickly.
+   */
+  idleGraceTicks?: number;
 }
 
 export interface RunningServer {
@@ -150,6 +157,8 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
   let lbInterval: ReturnType<typeof setInterval> | null = null;
   if (opts.periodicLeaderboard ?? true) {
     lbInterval = setInterval(() => {
+      // Nobody to broadcast to — skip the Mongo query while idle.
+      if (sockets.size === 0) return;
       broadcastLeaderboard().catch(() => {});
     }, 15_000);
   }
@@ -160,7 +169,14 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
   // sustained overload a fixed dt dilates game-time rather than teleporting fish forward —
   // watch the `server tick` gauge in the F3 panel to spot an over-budget tick.
   const FIXED_DT = TICK.ms / 1000;
-  const tickInterval = setInterval(() => {
+  // Idle sleep: with zero sockets there is nothing to watch the sim, so after a
+  // short drain (idleGraceTicks — enough for a final disconnect's death/score
+  // processing to land) the loop clears its own interval. ensureTicking() in the
+  // websocket open handler restarts it, so an idle server costs ~zero CPU.
+  const IDLE_GRACE_TICKS = opts.idleGraceTicks ?? 100;
+  let idleTicks = 0;
+  let tickInterval: ReturnType<typeof setInterval> | null = null;
+  const runTick = (): void => {
     const tickStart = performance.now();
     const wallNow = world.now();
 
@@ -444,7 +460,26 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     world.hitEvents.length = 0;
     world.zapEvents.length = 0;
     world.swallowEvents.length = 0;
-  }, TICK.ms);
+
+    // Idle sleep: pause the loop once the zero-socket drain elapses.
+    if (sockets.size === 0) {
+      idleTicks++;
+      if (idleTicks >= IDLE_GRACE_TICKS && tickInterval !== null) {
+        clearInterval(tickInterval);
+        tickInterval = null;
+        if (log) console.log("[loop] no clients — pausing game loop");
+      }
+    } else {
+      idleTicks = 0;
+    }
+  };
+  function ensureTicking(): void {
+    idleTicks = 0;
+    if (tickInterval !== null) return;
+    tickInterval = setInterval(runTick, TICK.ms);
+    if (log) console.log("[loop] client connected — resuming game loop");
+  }
+  tickInterval = setInterval(runTick, TICK.ms);
 
   // HTTP + WS server
   const server = Bun.serve<SocketData>({
@@ -475,6 +510,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     websocket: {
       open(ws) {
         sockets.set(ws.data.id, ws);
+        ensureTicking();
         world.humansPresent = true;
         broadcastLeaderboard(ws).catch(() => {});
         if (log) console.log(`[ws] open ${ws.data.id} (${ws.data.ip})`);
@@ -690,7 +726,7 @@ export function startServer(opts: StartServerOpts = {}): RunningServer {
     world,
     port: server.port ?? PORT,
     async close() {
-      clearInterval(tickInterval);
+      if (tickInterval !== null) clearInterval(tickInterval);
       if (lbInterval) clearInterval(lbInterval);
       // close all sockets so clients see a close event
       for (const ws of sockets.values()) {
